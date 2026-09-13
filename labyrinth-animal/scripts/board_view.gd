@@ -1,5 +1,5 @@
 extends Node2D
-## Draws the sea, the 4x4 building area, placed tiles, the start dock and the goal with food.
+## Draws the sea, the 4x4 building area, placed tiles, the start block and the goal island.
 ## Cell (0, 0) of the grid sits at this node's position.
 
 const Art := preload("res://scripts/art.gd")
@@ -7,6 +7,8 @@ const Tiles := preload("res://scripts/tiles.gd")
 
 const DROP_TIME := 0.25
 const DROP_HEIGHT := 60.0
+const ISLAND_RADIUS := 1.4  # in cells
+const ISLAND_OFFSET := 0.9  # island centre, in cells beyond the cell where the food sits
 
 var main  # the game script; read-only access to its state
 var time := 0.0
@@ -45,6 +47,10 @@ func _draw() -> void:
 			draw_colored_polygon(outline.slice(0, 4), fill)
 			draw_polyline(outline, Color(1, 1, 1, 0.35), 1.5, true)
 
+	var island := Art.cell_pos(Vector2(main.island_cell) + _outward() * ISLAND_OFFSET)
+	_draw_goal_ring(island)
+	Art.draw_island(self, island, ISLAND_RADIUS, -_outward(), Art.hash_cell(main.island_cell))
+
 	# Cells back to front, so blocks nearer the viewer cover the ones behind.
 	for depth in range(-2, 27):
 		for x in range(-1, 14):
@@ -61,22 +67,18 @@ func _draw() -> void:
 
 	var start := Art.cell_pos(Vector2(main.START_CELL))
 	Art.draw_flag(self, start + Vector2(-8, -4), Color(0.9, 0.2, 0.25), time)
-	var goal := Art.cell_pos(Vector2(main.goal_cell))
+	Art.draw_palm(self, island + Art.cell_pos(_outward() * 0.9) + Vector2(-14, 0), time)
 	if main.phase != "won":
-		Art.draw_goal(self, goal, main.animal_kind, time)
-	Art.draw_flag(self, goal + Vector2(10, -2), Color(1.0, 0.8, 0.1), time)
+		Art.draw_goal(self, Art.cell_pos(Vector2(main.island_cell)) + Vector2(4, 4), main.animal_kind, time)
 
 
 func _draw_cell(cell: Vector2i) -> void:
 	var pos := Art.cell_pos(Vector2(cell))
-	if cell == main.START_CELL:
-		Art.draw_dock(self, pos)
-		return
+	if cell == main.island_cell:
+		return  # drawn as part of the island
 
 	var slot: int = main.slot_of(cell)
-	if cell == main.goal_cell:
-		_draw_goal_ring(pos)
-	elif slot < 0 or not main.land.has(cell):
+	if (slot < 0 and cell != main.goal_cell and cell != main.START_CELL) or not main.land.has(cell):
 		return
 
 	if slot >= 0 and drop_started.has(slot):
@@ -88,10 +90,16 @@ func _draw_cell(cell: Vector2i) -> void:
 	Art.draw_land(self, pos, shore, Art.hash_cell(cell, main.board[slot] if slot >= 0 else 99))
 
 
+## Grid direction pointing away from the board at the goal.
+func _outward() -> Vector2:
+	return Vector2(main.island_cell - main.goal_cell)
+
+
 func _draw_goal_ring(pos: Vector2) -> void:
 	var pulse := fmod(time, 1.6) / 1.6
+	var r := ISLAND_RADIUS * Art.HW * 1.41
 	draw_set_transform(pos + Vector2(0, Art.THICK), 0.0, Vector2(1, 0.5))
-	draw_arc(Vector2.ZERO, 30.0 + pulse * 30.0, 0, TAU, 32, Color(1, 1, 0.7, 0.6 * (1.0 - pulse)), 3.0)
+	draw_arc(Vector2.ZERO, r + 8.0 + pulse * 30.0, 0, TAU, 32, Color(1, 1, 0.7, 0.6 * (1.0 - pulse)), 3.0)
 	draw_set_transform(Vector2.ZERO)
 
 

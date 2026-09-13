@@ -9,11 +9,11 @@ const AnimalScript := preload("res://scripts/animal.gd")
 const TilePreviewScript := preload("res://scripts/tile_preview.gd")
 const SfxScript := preload("res://scripts/sfx.gd")
 
-const START_CELL := Vector2i(-1, 1)  # dock left of the top-left slot's middle row
+const START_CELL := Vector2i(-1, 1)  # start block left of the top-left slot's middle row
 const TILES_PER_ROUND := 8
-const STEP_TIME := 0.34
+const STEP_TIME := 0.16
 const START_DELAY := 0.5
-const MAX_STEPS := 2000  # safety net; the wall-follower always ends at the goal or back at the dock
+const MAX_STEPS := 2000  # safety net; the wall-follower always ends at the goal or back at the start
 const ROUND_BONUS := 50
 const SAVE_PATH := "user://save.cfg"
 
@@ -25,7 +25,8 @@ const ANIMALS := [
 	{"name": "Cão", "who": "o cão", "food": "ao osso", "win": "Osso!"},
 ]
 
-# Goal docks outside the grid, grouped by how many tiles a shortest path needs.
+# Land cells just outside the grid that connect to the goal island, grouped by how many
+# tiles a shortest path needs. The island itself lies one cell further out.
 const GOALS := {
 	4: [Vector2i(1, 12), Vector2i(12, 1)],
 	5: [Vector2i(4, 12), Vector2i(12, 4)],
@@ -44,13 +45,13 @@ var current_tile := 0
 var tiles_left := 0
 var phase := "title"  # title, build, walk, won, lost
 var hover_slot := -1
-var goal_cell := Vector2i(12, 1)
+var goal_cell := Vector2i(12, 1)  # connector block next to the grid
+var island_cell := Vector2i(13, 1)  # where the food is; reaching it wins
 var scored_slots := {}
 var score := 0
 var high_score := 0
 var round_num := 1
 var animal_kind := 0
-var fast := false
 var round_token := 0  # bumped every round so a walk left over from an old round stops
 
 var score_label: Label
@@ -60,7 +61,6 @@ var tiles_label: Label
 var points_label: Label
 var preview: Control
 var hint_label: Label
-var speed_button: Button
 var overlay: Control
 var overlay_title: Label
 var overlay_body: Label
@@ -119,6 +119,13 @@ func slot_of(cell: Vector2i) -> int:
 	return (cell.y / 3) * 4 + cell.x / 3
 
 
+## Uses `connector` as the goal connector and puts the island one cell further from the grid.
+func _set_goal(connector: Vector2i) -> void:
+	goal_cell = connector
+	island_cell = connector + (Vector2i(0, 1) if connector.y > 11 else Vector2i(1, 0))
+	land = {START_CELL: true, goal_cell: true, island_cell: true}
+
+
 func slot_cell(slot: int) -> Vector2i:
 	return Vector2i((slot % 4) * 3, (slot / 4) * 3)
 
@@ -149,8 +156,7 @@ func _reset_round() -> void:
 	board_view.clear_drops()
 
 	var options: Array = GOALS[mini(3 + round_num, 7)]
-	goal_cell = options[randi() % options.size()]
-	land = {START_CELL: true, goal_cell: true}
+	_set_goal(options[randi() % options.size()])
 
 	deck = range(1, Tiles.count() + 1)
 	deck.shuffle()
@@ -205,37 +211,33 @@ func _walk() -> void:
 				break
 
 		if next_dir < 0:
-			# Only happens on the dock when the first cell is water.
+			# Only happens on the start block when the first cell is water.
 			sfx.play("jump")
-			await animal.fall_to(Art.cell_pos(Vector2(pos + Art.DIRS[dir])), _step_time() * 1.5)
+			await animal.fall_to(Art.cell_pos(Vector2(pos + Art.DIRS[dir])), STEP_TIME * 1.5)
 			if token != round_token:
 				return
 			sfx.play("splash")
 			await get_tree().create_timer(0.8).timeout
 			if token == round_token:
-				_lose("Splash!", "%s saltou para a água: não havia terra à frente do cais." % _who(true))
+				_lose("Splash!", "%s saltou para a água: não havia terra à frente." % _who(true))
 			return
 
 		dir = next_dir
 		pos += Art.DIRS[dir]
-		await animal.step_to(Art.cell_pos(Vector2(pos)), dir, _step_time())
+		await animal.step_to(Art.cell_pos(Vector2(pos)), dir, STEP_TIME)
 		if token != round_token:
 			return
 		sfx.play("step")
 		_score_cell(pos)
 
-		if pos == goal_cell:
+		if pos == island_cell:
 			_win()
 			return
 		if pos == START_CELL:
-			_lose("Sem saída!", "%s não encontrou caminho até %s e voltou ao cais." % [_who(true), ANIMALS[animal_kind].food])
+			_lose("Sem saída!", "%s não encontrou caminho até %s e voltou ao início." % [_who(true), ANIMALS[animal_kind].food])
 			return
 
 	_lose("Perdido!", "%s andou às voltas sem chegar %s." % [_who(true), ANIMALS[animal_kind].food])
-
-
-func _step_time() -> float:
-	return STEP_TIME * (0.45 if fast else 1.0)
 
 
 func _score_cell(cell: Vector2i) -> void:
@@ -264,7 +266,7 @@ func _win() -> void:
 	if token != round_token:
 		return
 	_show_overlay(ANIMALS[animal_kind].win,
-		"%s chegou ao outro cais.\nBónus da ronda: +%d\nPontuação: %d" % [_who(true), bonus, score],
+		"%s chegou à ilha.\nBónus da ronda: +%d\nPontuação: %d" % [_who(true), bonus, score],
 		"Ronda %d" % (round_num + 1), _next_round)
 
 
@@ -347,19 +349,6 @@ func _build_hud() -> void:
 	hint_label.add_theme_color_override("font_outline_color", Color(0.05, 0.2, 0.35))
 	hint_label.add_theme_constant_override("outline_size", 5)
 	root.add_child(hint_label)
-
-	speed_button = Button.new()
-	speed_button.text = "Velocidade: normal"
-	speed_button.custom_minimum_size = Vector2(210, 0)
-	speed_button.focus_mode = Control.FOCUS_NONE
-	speed_button.pressed.connect(func() -> void:
-		fast = not fast
-		sfx.play("click")
-		_update_hud())
-	root.add_child(speed_button)
-	speed_button.grow_horizontal = Control.GROW_DIRECTION_BEGIN
-	speed_button.grow_vertical = Control.GROW_DIRECTION_BEGIN
-	speed_button.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_RIGHT, Control.PRESET_MODE_MINSIZE, 14)
 
 	# Message box for the title, win and game-over screens.
 	overlay = ColorRect.new()
@@ -482,7 +471,6 @@ func _update_hud() -> void:
 	score_label.text = str(score)
 	round_label.text = "Ronda %d" % round_num
 	best_label.text = "Recorde: %d" % maxi(high_score, score)
-	speed_button.text = "Velocidade: rápida" if fast else "Velocidade: normal"
 	match phase:
 		"build":
 			hint_label.text = "Clica num espaço para pôr a peça. Faltam %d." % tiles_left

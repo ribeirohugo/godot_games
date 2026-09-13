@@ -11,8 +11,6 @@ const GRASS_DARK := Color(0.33, 0.6, 0.22)
 const SAND := Color(0.93, 0.84, 0.58)
 const DIRT_LEFT := Color(0.58, 0.4, 0.23)
 const DIRT_RIGHT := Color(0.45, 0.3, 0.17)
-const WOOD := Color(0.66, 0.46, 0.26)
-const WOOD_DARK := Color(0.44, 0.29, 0.15)
 
 # Neighbour offsets, indexed by direction: 0 east (+x), 1 south (+y), 2 west (-x), 3 north (-y).
 const DIRS := [Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0), Vector2i(0, -1)]
@@ -71,22 +69,66 @@ static func draw_land(ci: CanvasItem, c: Vector2, shore: Array, variation: int, 
 		ci.draw_circle(c + Vector2(5, -2), 1.8, _a(Color(1, 0.95, 0.5), alpha))
 
 
-## Wooden dock block, used for the start.
-static func draw_dock(ci: CanvasItem, c: Vector2) -> void:
-	var t := THICK
-	ci.draw_colored_polygon(PackedVector2Array([
-		c + Vector2(-HW, 0), c + Vector2(0, HH), c + Vector2(0, HH + t), c + Vector2(-HW, t)]), WOOD_DARK)
-	ci.draw_colored_polygon(PackedVector2Array([
-		c + Vector2(0, HH), c + Vector2(HW, 0), c + Vector2(HW, t), c + Vector2(0, HH + t)]), WOOD_DARK.darkened(0.2))
-	ci.draw_colored_polygon(_diamond(c, 1.0), WOOD)
-	for i in range(1, 4):
-		var f := i / 4.0
-		var a := c + Vector2(-HW, 0).lerp(Vector2(0, -HH), f)
-		var b := c + Vector2(0, HH).lerp(Vector2(HW, 0), f)
-		ci.draw_line(a, b, WOOD_DARK, 1.2)
-	# Posts sticking out of the water.
-	for p in [Vector2(-HW, t), Vector2(0, HH + t), Vector2(HW, t)]:
-		ci.draw_line(c + p, c + p + Vector2(0, 8), WOOD_DARK.darkened(0.3), 3.0)
+## Island outline: a wobbly ring of points around `c`. `radius` is in cells, `inward` points
+## back toward the board so the shore there stays full and meets the connector block.
+static func island_outline(c: Vector2, radius: float, inward: Vector2, shape_seed: int, scale: float = 1.0) -> PackedVector2Array:
+	var points := PackedVector2Array()
+	var phase := float(shape_seed % 97) * 0.37
+	var inward_angle := inward.angle()
+	var count := 40
+	for i in count:
+		var a := TAU * i / count
+		var wobble := 0.2 * sin(3.0 * a + phase) + 0.12 * sin(5.0 * a + phase * 1.7) + 0.07 * sin(8.0 * a + phase * 2.3)
+		var near := clampf(1.0 - absf(angle_difference(a, inward_angle)) / 1.0, 0.0, 1.0)
+		var r := lerpf(radius * (1.0 + wobble), radius * 1.08, near) * scale
+		points.append(c + cell_pos(Vector2(cos(a), sin(a)) * r))
+	return points
+
+
+## A natural-looking island: sandy sides, a sand beach and a grassy middle.
+static func draw_island(ci: CanvasItem, c: Vector2, radius: float, inward: Vector2, shape_seed: int) -> void:
+	var outline := island_outline(c, radius, inward, shape_seed)
+	ci.draw_colored_polygon(_shifted(island_outline(c, radius, inward, shape_seed, 1.12), Vector2(0, THICK + 3)),
+		Color(1, 1, 1, 0.3))  # foam
+	for i in range(int(THICK), 0, -2):
+		ci.draw_colored_polygon(_shifted(outline, Vector2(0, i)), SAND.darkened(0.15 + 0.2 * i / THICK))
+	ci.draw_colored_polygon(outline, SAND)
+	var grass := island_outline(c + Vector2(-2, -2), radius * 0.68, inward, shape_seed + 31)
+	ci.draw_colored_polygon(grass, GRASS)
+	for tuft in [Vector2(-22, -4), Vector2(18, -8), Vector2(6, 8), Vector2(-8, -12)]:
+		for i in 3:
+			var x := -4.0 + i * 4.0
+			ci.draw_line(c + tuft + Vector2(x, 2), c + tuft + Vector2(x * 1.4, -4), GRASS_DARK, 1.5)
+	# Shells and a couple of rocks on the beach.
+	var n := outline.size()
+	for k in [5, 17, 29]:
+		var p := c.lerp(outline[(k + shape_seed) % n], 0.85)
+		ci.draw_circle(p, 2.0, Color(1, 0.95, 0.9))
+	for k in [11, 34]:
+		var p := c.lerp(outline[(k + shape_seed) % n], 0.9)
+		ci.draw_circle(p, 4.0, Color(0.55, 0.55, 0.5))
+		ci.draw_circle(p + Vector2(-1, -1.5), 2.5, Color(0.68, 0.68, 0.62))
+
+
+static func draw_palm(ci: CanvasItem, base: Vector2, time: float) -> void:
+	var sway := sin(time * 1.5) * 1.5
+	var top := base + Vector2(-6 + sway, -46)
+	var trunk := PackedVector2Array()
+	for i in 9:
+		var t := i / 8.0
+		trunk.append(base.lerp(top, t) + Vector2(sin(t * PI) * 5.0, 0))
+	ci.draw_polyline(trunk, Color(0.45, 0.3, 0.16), 4.5, true)
+	for i in range(1, 8, 2):
+		var p := trunk[i]
+		ci.draw_line(p + Vector2(-2.5, 0), p + Vector2(2.5, 1), Color(0.35, 0.22, 0.1), 1.2)
+	var leaf := Color(0.25, 0.62, 0.22)
+	for a in [-160.0, -125.0, -55.0, -20.0, 20.0, 160.0]:
+		var ang := deg_to_rad(a) + sin(time * 2.0 + a) * 0.05
+		var tip := top + Vector2(cos(ang), sin(ang) * 0.6 + 0.35) * 22.0
+		var mid := top.lerp(tip, 0.5) + Vector2(0, -5)
+		ci.draw_polyline(PackedVector2Array([top, mid, tip]), leaf, 4.0, true)
+	ci.draw_circle(top + Vector2(-2, 3), 2.8, Color(0.4, 0.28, 0.12))
+	ci.draw_circle(top + Vector2(3, 3), 2.8, Color(0.4, 0.28, 0.12))
 
 
 static func draw_flag(ci: CanvasItem, base: Vector2, color: Color, time: float) -> void:
@@ -162,6 +204,13 @@ static func slot_outline(origin: Vector2, cell: Vector2i) -> PackedVector2Array:
 		origin + cell_pos(c + Vector2(0, 2)) + Vector2(-HW, 0),
 		origin + cell_pos(c) + Vector2(0, -HH),
 	])
+
+
+static func _shifted(points: PackedVector2Array, offset: Vector2) -> PackedVector2Array:
+	var out := PackedVector2Array()
+	for p in points:
+		out.append(p + offset)
+	return out
 
 
 static func _diamond(c: Vector2, s: float) -> PackedVector2Array:
