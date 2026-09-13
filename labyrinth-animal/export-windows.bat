@@ -1,7 +1,7 @@
 @echo off
 rem Exports the game as a standalone Windows .exe into build\windows\.
 setlocal
-call "%~dp0_config.bat" || exit /b 1
+call "%~dp0..\_config.bat" "%~dp0." || exit /b 1
 
 if not exist "%TEMPLATES%\windows_release_x86_64.exe" (
     echo Windows export templates not found in:

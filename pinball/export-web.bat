@@ -1,7 +1,7 @@
 @echo off
 rem Exports the game for browsers into build\web\.
 setlocal
-call "%~dp0_config.bat" || exit /b 1
+call "%~dp0..\_config.bat" "%~dp0." || exit /b 1
 
 if not exist "%TEMPLATES%\web_nothreads_release.zip" (
     echo Web export templates not found in:
