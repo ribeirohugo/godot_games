@@ -7,21 +7,21 @@ extends Node2D
 const SCREEN := Vector2(1000, 760)
 
 const TITLE := "WebPlatinum"
-const SUBTITLE := "APPS AND GAMING"
 const TITLE_SIZE := 76
 const TITLE_SPACING := -2.0
-const SUBTITLE_SIZE := 26
-const SUBTITLE_SPACING := 10.0
+const WEBSITE := "wplatinum.com"
+const WEBSITE_SIZE := 21
+const WEBSITE_COLOR := Color(0.62, 0.72, 0.84, 0.7)
 
 const LOGO_CENTER := Vector2(500, 280)
 const LOGO_SIZE := 300.0
 const TITLE_Y := 530.0
-const SUBTITLE_Y := 590.0
+const WEBSITE_Y := 584.0
 
 # Timeline, in seconds.
 const LOGO_IN := 0.0
 const TITLE_IN := 0.7
-const SUBTITLE_IN := 1.3
+const WEBSITE_IN := 1.3
 const FADE_OUT := 3.4
 const FADE_TIME := 0.6
 const SHINE_SPEED := 2.4  # radians per second
@@ -37,7 +37,7 @@ const SHADOW := Color(0.0, 0.02, 0.05, 0.85)
 var clock := 0.0
 var fade_start := FADE_OUT
 var title_font: Font
-var subtitle_font: Font
+var website_font: Font
 
 @onready var logo: Sprite2D = $Logo
 @onready var text_back: Node2D = $TextBack
@@ -46,8 +46,8 @@ var subtitle_font: Font
 
 
 func _ready() -> void:
-	title_font = _bold_font()
-	subtitle_font = title_font
+	title_font = _font(700)
+	website_font = _font(400)
 	logo.position = LOGO_CENTER
 	text_back.draw.connect(_draw_text_back)
 	title.draw.connect(_draw_title)
@@ -94,16 +94,16 @@ func _update() -> void:
 	fade.queue_redraw()
 
 
-## Arial Bold like the design; the web build has no system fonts, so it emboldens the default one.
-func _bold_font() -> Font:
+## Arial like the design; the web build has no system fonts, so it uses the default one (emboldened for bold).
+func _font(weight: int) -> Font:
 	if OS.has_feature("web"):
 		var variation := FontVariation.new()
 		variation.base_font = ThemeDB.fallback_font
-		variation.variation_embolden = 0.9
+		variation.variation_embolden = 0.9 if weight >= 700 else 0.0
 		return variation
 	var system := SystemFont.new()
 	system.font_names = PackedStringArray(["Arial", "Helvetica", "Liberation Sans"])
-	system.font_weight = 700
+	system.font_weight = weight
 	return system
 
 
@@ -117,11 +117,36 @@ func _draw() -> void:
 	draw_circle(LOGO_CENTER, LOGO_SIZE / 2.0 + 14.0, Color(BLUE, 0.10 * t * (0.6 + 0.4 * pulse)))
 
 
-## Title shadow and the blue subtitle, under the chrome title.
+## Title shadow and the website, under the chrome title.
 func _draw_text_back() -> void:
 	_draw_letters(text_back, title_font, TITLE, TITLE_SIZE, TITLE_SPACING, _title_y() + 3.0, SHADOW, TITLE_IN, 0.8)
-	_draw_letters(text_back, subtitle_font, SUBTITLE, SUBTITLE_SIZE, SUBTITLE_SPACING, SUBTITLE_Y + 2.0, SHADOW, SUBTITLE_IN, 0.7)
-	_draw_letters(text_back, subtitle_font, SUBTITLE, SUBTITLE_SIZE, SUBTITLE_SPACING, SUBTITLE_Y, BLUE, SUBTITLE_IN, 0.7)
+	_draw_website()
+
+
+## Small muted web address with a globe icon, fading in as one piece.
+func _draw_website() -> void:
+	var t := _ease(clock, WEBSITE_IN, 0.9)
+	if t <= 0.0:
+		return
+	var color := Color(WEBSITE_COLOR, WEBSITE_COLOR.a * t)
+	var icon_radius := WEBSITE_SIZE * 0.36
+	var gap := 8.0
+	var text_width := website_font.get_string_size(WEBSITE, HORIZONTAL_ALIGNMENT_LEFT, -1, WEBSITE_SIZE).x
+	var x := SCREEN.x / 2.0 - (icon_radius * 2.0 + gap + text_width) / 2.0
+	var y := WEBSITE_Y + (1.0 - t) * 8.0
+	_draw_globe(text_back, Vector2(x + icon_radius, y - WEBSITE_SIZE * 0.36), icon_radius, color)
+	text_back.draw_string(website_font, Vector2(x + icon_radius * 2.0 + gap, y), WEBSITE, HORIZONTAL_ALIGNMENT_LEFT, -1, WEBSITE_SIZE, color)
+
+
+## Thin outline globe: circle, equator and two meridians.
+func _draw_globe(canvas: CanvasItem, center: Vector2, radius: float, color: Color) -> void:
+	canvas.draw_arc(center, radius, 0.0, TAU, 32, color, 1.4, true)
+	canvas.draw_line(center - Vector2(radius, 0), center + Vector2(radius, 0), color, 1.2, true)
+	var meridian := PackedVector2Array()
+	for i in 25:
+		var a := TAU * i / 24.0
+		meridian.append(center + Vector2(cos(a) * radius * 0.42, sin(a) * radius))
+	canvas.draw_polyline(meridian, color, 1.2, true)
 
 
 ## Drawn white; the chrome shader on this node gives it the metal gradient.
