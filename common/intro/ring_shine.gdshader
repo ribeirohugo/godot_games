@@ -3,7 +3,7 @@ shader_type canvas_item;
 
 uniform float angle = 0.0; // radians, where the brightest point of the shine is
 uniform float strength : hint_range(0.0, 2.0) = 1.0;
-uniform float ring_inner = 0.78; // ring starts at this fraction of the logo radius
+uniform float ring_inner = 0.81; // ring starts at this fraction of the logo radius
 uniform float ring_outer = 0.995;
 uniform vec3 shine_color : source_color = vec3(1.0, 1.0, 1.0);
 

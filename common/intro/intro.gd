@@ -1,20 +1,22 @@
 extends Node2D
-## WPlatinum studio intro shown before the game. Any key, click or touch skips it.
+## WebPlatinum studio intro shown before the game. Any key, click or touch skips it.
 ## Lives in the root common/intro folder; _config.bat copies it into every game.
 ## A game uses it by setting run/main_scene to res://common/intro/intro.tscn.
+## The text follows common/design/intro_text_design.png.
 
 const SCREEN := Vector2(1000, 760)
 
-const TITLE := "WPlatinum"
-const SUBTITLE := "Apps and Gaming"
-const TITLE_SIZE := 78
-const SUBTITLE_SIZE := 28
-const SUBTITLE_SPACING := 6.0
+const TITLE := "WebPlatinum"
+const SUBTITLE := "APPS AND GAMING"
+const TITLE_SIZE := 76
+const TITLE_SPACING := -2.0
+const SUBTITLE_SIZE := 26
+const SUBTITLE_SPACING := 10.0
 
 const LOGO_CENTER := Vector2(500, 280)
 const LOGO_SIZE := 300.0
-const TITLE_Y := 520.0
-const SUBTITLE_Y := 580.0
+const TITLE_Y := 530.0
+const SUBTITLE_Y := 590.0
 
 # Timeline, in seconds.
 const LOGO_IN := 0.0
@@ -26,27 +28,34 @@ const SHINE_SPEED := 2.4  # radians per second
 
 const BG := Color("070b12")
 const BG_GLOW := Color("0f2238")
-const BLUE := Color("3fa9ff")
-const SILVER := Color("c9d3de")
-const WHITE := Color("f4f8fc")
-const INK := Color(0.02, 0.03, 0.06)
+const BLUE := Color("3aa0ff")
+const SHADOW := Color(0.0, 0.02, 0.05, 0.85)
 
 ## Scene opened when the intro ends.
 @export_file("*.tscn") var next_scene := "res://scenes/main.tscn"
 
 var clock := 0.0
 var fade_start := FADE_OUT
-var font: Font
+var title_font: Font
+var subtitle_font: Font
 
 @onready var logo: Sprite2D = $Logo
-@onready var overlay: Node2D = $Overlay
+@onready var text_back: Node2D = $TextBack
+@onready var title: Node2D = $Title
+@onready var fade: Node2D = $Fade
 
 
 func _ready() -> void:
-	font = ThemeDB.fallback_font
+	title_font = _bold_font()
+	subtitle_font = title_font
 	logo.position = LOGO_CENTER
-	overlay.draw.connect(_draw_overlay)
-	_update_logo()
+	text_back.draw.connect(_draw_text_back)
+	title.draw.connect(_draw_title)
+	fade.draw.connect(_draw_fade)
+	var material := title.material as ShaderMaterial
+	material.set_shader_parameter("text_top", TITLE_Y - TITLE_SIZE * 0.74)
+	material.set_shader_parameter("text_bottom", TITLE_Y + TITLE_SIZE * 0.02)
+	_update()
 
 
 func _process(delta: float) -> void:
@@ -55,9 +64,7 @@ func _process(delta: float) -> void:
 		set_process(false)
 		get_tree().change_scene_to_file(next_scene)
 		return
-	_update_logo()
-	queue_redraw()
-	overlay.queue_redraw()
+	_update()
 
 
 func _unhandled_input(event: InputEvent) -> void:
@@ -66,14 +73,38 @@ func _unhandled_input(event: InputEvent) -> void:
 		fade_start = clock
 
 
-func _update_logo() -> void:
+func _update() -> void:
 	var t := _ease(clock, LOGO_IN, 1.0)
 	var size := LOGO_SIZE * lerpf(0.82, 1.0, t)
 	logo.scale = Vector2.ONE * size / logo.texture.get_width()
 	logo.modulate.a = t
-	var material := logo.material as ShaderMaterial
-	material.set_shader_parameter("angle", -PI / 2.0 + clock * SHINE_SPEED)
-	material.set_shader_parameter("strength", t * (0.9 + 0.3 * sin(clock * 3.0)))
+	var logo_material := logo.material as ShaderMaterial
+	logo_material.set_shader_parameter("angle", -PI / 2.0 + clock * SHINE_SPEED)
+	logo_material.set_shader_parameter("strength", t * (0.9 + 0.3 * sin(clock * 3.0)))
+
+	# Highlight sweeping across the title, left to right.
+	var width := _text_width(title_font, TITLE, TITLE_SIZE, TITLE_SPACING)
+	var sweep := clampf((clock - TITLE_IN - 0.5) / 1.2, 0.0, 1.0)
+	var title_material := title.material as ShaderMaterial
+	title_material.set_shader_parameter("sweep_x", SCREEN.x / 2.0 - width / 2.0 - 120.0 + (width + 240.0) * sweep)
+
+	queue_redraw()
+	text_back.queue_redraw()
+	title.queue_redraw()
+	fade.queue_redraw()
+
+
+## Arial Bold like the design; the web build has no system fonts, so it emboldens the default one.
+func _bold_font() -> Font:
+	if OS.has_feature("web"):
+		var variation := FontVariation.new()
+		variation.base_font = ThemeDB.fallback_font
+		variation.variation_embolden = 0.9
+		return variation
+	var system := SystemFont.new()
+	system.font_names = PackedStringArray(["Arial", "Helvetica", "Liberation Sans"])
+	system.font_weight = 700
+	return system
 
 
 ## Background, drawn behind the logo.
@@ -86,56 +117,47 @@ func _draw() -> void:
 	draw_circle(LOGO_CENTER, LOGO_SIZE / 2.0 + 14.0, Color(BLUE, 0.10 * t * (0.6 + 0.4 * pulse)))
 
 
-## Text and the fade, drawn in front of the logo.
-func _draw_overlay() -> void:
-	_draw_title()
-	_draw_subtitle()
-	# Fade in from black at the start and out to black at the end.
+## Title shadow and the blue subtitle, under the chrome title.
+func _draw_text_back() -> void:
+	_draw_letters(text_back, title_font, TITLE, TITLE_SIZE, TITLE_SPACING, _title_y() + 3.0, SHADOW, TITLE_IN, 0.8)
+	_draw_letters(text_back, subtitle_font, SUBTITLE, SUBTITLE_SIZE, SUBTITLE_SPACING, SUBTITLE_Y + 2.0, SHADOW, SUBTITLE_IN, 0.7)
+	_draw_letters(text_back, subtitle_font, SUBTITLE, SUBTITLE_SIZE, SUBTITLE_SPACING, SUBTITLE_Y, BLUE, SUBTITLE_IN, 0.7)
+
+
+## Drawn white; the chrome shader on this node gives it the metal gradient.
+func _draw_title() -> void:
+	_draw_letters(title, title_font, TITLE, TITLE_SIZE, TITLE_SPACING, _title_y(), Color.WHITE, TITLE_IN, 0.8)
+
+
+## Fade in from black at the start and out to black at the end.
+func _draw_fade() -> void:
 	var dark := maxf(1.0 - clock / 0.4, clampf((clock - fade_start) / FADE_TIME, 0.0, 1.0))
 	if dark > 0.0:
-		overlay.draw_rect(Rect2(Vector2.ZERO, SCREEN), Color(0, 0, 0, dark))
+		fade.draw_rect(Rect2(Vector2.ZERO, SCREEN), Color(0, 0, 0, dark))
 
 
-func _draw_title() -> void:
-	var t := _ease(clock, TITLE_IN, 0.8)
+func _title_y() -> float:
+	return TITLE_Y + (1.0 - _ease(clock, TITLE_IN, 0.8)) * 24.0
+
+
+## Centered text, revealed letter by letter from `start` over `length` seconds.
+func _draw_letters(canvas: CanvasItem, font: Font, text: String, size: int, spacing: float, y: float, color: Color, start: float, length: float) -> void:
+	var t := _ease(clock, start, length)
 	if t <= 0.0:
 		return
-	var width := font.get_string_size(TITLE, HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_SIZE).x
-	var x := SCREEN.x / 2.0 - width / 2.0
-	var y := TITLE_Y + (1.0 - t) * 24.0
-	# Light sweep across the letters, left to right.
-	var sweep := (clock - TITLE_IN - 0.4) * 1.1
-	for i in TITLE.length():
-		var letter := TITLE[i]
-		var letter_t := clampf(t * TITLE.length() - i * 0.5, 0.0, 1.0)
-		var shine := clampf(1.0 - absf(sweep - float(i) / TITLE.length()) * 5.0, 0.0, 1.0)
-		var color := SILVER.lerp(WHITE, shine)
-		var at := Vector2(x, y)
-		overlay.draw_string_outline(font, at, letter, HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_SIZE, 12, Color(INK, letter_t))
-		overlay.draw_string_outline(font, at, letter, HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_SIZE, 4, Color(BLUE, 0.35 * letter_t))
-		overlay.draw_string(font, at, letter, HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_SIZE, Color(color, letter_t))
-		x += font.get_string_size(letter, HORIZONTAL_ALIGNMENT_LEFT, -1, TITLE_SIZE).x
+	var x := SCREEN.x / 2.0 - _text_width(font, text, size, spacing) / 2.0
+	for i in text.length():
+		var letter := text[i]
+		var letter_t := clampf(t * text.length() - i * 0.5, 0.0, 1.0)
+		canvas.draw_string(font, Vector2(x, y), letter, HORIZONTAL_ALIGNMENT_LEFT, -1, size, Color(color, color.a * letter_t))
+		x += font.get_string_size(letter, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x + spacing
 
 
-func _draw_subtitle() -> void:
-	var t := _ease(clock, SUBTITLE_IN, 0.7)
-	if t <= 0.0:
-		return
+func _text_width(font: Font, text: String, size: int, spacing: float) -> float:
 	var width := 0.0
-	for letter in SUBTITLE:
-		width += font.get_string_size(letter, HORIZONTAL_ALIGNMENT_LEFT, -1, SUBTITLE_SIZE).x + SUBTITLE_SPACING
-	width -= SUBTITLE_SPACING
-	# Accent lines growing out from both sides of the subtitle.
-	var line_y := SUBTITLE_Y - SUBTITLE_SIZE * 0.35
-	var gap := width / 2.0 + 24.0
-	var reach := 110.0 * t
-	overlay.draw_line(Vector2(SCREEN.x / 2.0 - gap - reach, line_y), Vector2(SCREEN.x / 2.0 - gap, line_y), Color(BLUE, t), 2.0, true)
-	overlay.draw_line(Vector2(SCREEN.x / 2.0 + gap, line_y), Vector2(SCREEN.x / 2.0 + gap + reach, line_y), Color(BLUE, t), 2.0, true)
-
-	var x := SCREEN.x / 2.0 - width / 2.0
-	for letter in SUBTITLE:
-		overlay.draw_string(font, Vector2(x, SUBTITLE_Y), letter, HORIZONTAL_ALIGNMENT_LEFT, -1, SUBTITLE_SIZE, Color(BLUE.lerp(WHITE, 0.35), t))
-		x += font.get_string_size(letter, HORIZONTAL_ALIGNMENT_LEFT, -1, SUBTITLE_SIZE).x + SUBTITLE_SPACING
+	for letter in text:
+		width += font.get_string_size(letter, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x + spacing
+	return width - spacing
 
 
 ## 0 before `start`, easing up to 1 over `length` seconds.

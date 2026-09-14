@@ -1,11 +1,15 @@
-[gd_scene load_steps=5 format=3]
+[gd_scene load_steps=7 format=3]
 
 [ext_resource type="Script" path="res://common/intro/intro.gd" id="1"]
 [ext_resource type="Texture2D" path="res://common/intro/logo.png" id="2"]
 [ext_resource type="Shader" path="res://common/intro/ring_shine.gdshader" id="3"]
+[ext_resource type="Shader" path="res://common/intro/text_chrome.gdshader" id="4"]
 
 [sub_resource type="ShaderMaterial" id="ShaderMaterial_shine"]
 shader = ExtResource("3")
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_chrome"]
+shader = ExtResource("4")
 
 [node name="Intro" type="Node2D"]
 script = ExtResource("1")
@@ -15,4 +19,9 @@ texture_filter = 4
 material = SubResource("ShaderMaterial_shine")
 texture = ExtResource("2")
 
-[node name="Overlay" type="Node2D" parent="."]
+[node name="TextBack" type="Node2D" parent="."]
+
+[node name="Title" type="Node2D" parent="."]
+material = SubResource("ShaderMaterial_chrome")
+
+[node name="Fade" type="Node2D" parent="."]

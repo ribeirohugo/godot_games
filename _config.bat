@@ -41,7 +41,8 @@ if not "%GODOT:mono=%"=="%GODOT%" set "TEMPLATES=%TEMPLATES%.mono"
 rem Shared code (like the intro) lives in common\ next to this file. Godot can only load files
 rem inside the project, so each folder in it is mirrored into <game>\common\ before every run.
 rem Edit the files in the root common\, not the copies: the copies are overwritten each time.
-for /d %%d in ("%~dp0common\*") do (
+rem common\design holds design files (logo versions) and is not copied into the games.
+for /d %%d in ("%~dp0common\*") do if /i not "%%~nxd"=="design" (
     robocopy "%%d" "%PROJECT%\common\%%~nxd" /MIR /NJH /NJS /NFL /NDL /NP >nul
     if errorlevel 8 (
         echo Could not copy %%d into %PROJECT%\common
