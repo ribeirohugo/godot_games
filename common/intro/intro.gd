@@ -3,8 +3,7 @@ extends Node2D
 ## Lives in the root common/intro folder; _config.bat copies it into every game.
 ## A game uses it by setting run/main_scene to res://common/intro/intro.tscn.
 ## The text follows common/design/intro_text_design.png.
-
-const SCREEN := Vector2(1000, 760)
+## Sizes below are for a 1000x760 screen; everything scales to fit the game's screen.
 
 const TITLE := "WebPlatinum"
 const TITLE_SIZE := 76
@@ -13,10 +12,14 @@ const WEBSITE := "wplatinum.com"
 const WEBSITE_SIZE := 21
 const WEBSITE_COLOR := Color(0.62, 0.72, 0.84, 0.7)
 
-const LOGO_CENTER := Vector2(500, 280)
+# Layout, as offsets from the middle of the screen.
+const LOGO_OFFSET := -100.0
 const LOGO_SIZE := 300.0
-const TITLE_Y := 530.0
-const WEBSITE_Y := 584.0
+const TITLE_OFFSET := 150.0
+const WEBSITE_OFFSET := 204.0
+## Area the intro needs; it is scaled to fit inside the screen.
+const CONTENT := Vector2(540, 620)
+const REFERENCE_SCALE := 1.226  # scale of the 1000x760 screen, where the sizes above apply
 
 # Timeline, in seconds.
 const LOGO_IN := 0.0
@@ -39,6 +42,13 @@ var fade_start := FADE_OUT
 var title_font: Font
 var website_font: Font
 
+# Current layout, refreshed every frame so window resizes are followed.
+var screen := Vector2.ZERO
+var u := 1.0
+var logo_center := Vector2.ZERO
+var title_size := TITLE_SIZE
+var website_size := WEBSITE_SIZE
+
 @onready var logo: Sprite2D = $Logo
 @onready var text_back: Node2D = $TextBack
 @onready var title: Node2D = $Title
@@ -48,13 +58,9 @@ var website_font: Font
 func _ready() -> void:
 	title_font = _font(700)
 	website_font = _font(400)
-	logo.position = LOGO_CENTER
 	text_back.draw.connect(_draw_text_back)
 	title.draw.connect(_draw_title)
 	fade.draw.connect(_draw_fade)
-	var material := title.material as ShaderMaterial
-	material.set_shader_parameter("text_top", TITLE_Y - TITLE_SIZE * 0.74)
-	material.set_shader_parameter("text_bottom", TITLE_Y + TITLE_SIZE * 0.02)
 	_update()
 
 
@@ -73,20 +79,34 @@ func _unhandled_input(event: InputEvent) -> void:
 		fade_start = clock
 
 
+func _layout() -> void:
+	screen = get_viewport_rect().size
+	u = minf(screen.x / CONTENT.x, screen.y / CONTENT.y) / REFERENCE_SCALE
+	logo_center = Vector2(screen.x / 2.0, screen.y / 2.0 + LOGO_OFFSET * u)
+	title_size = maxi(1, roundi(TITLE_SIZE * u))
+	website_size = maxi(1, roundi(WEBSITE_SIZE * u))
+
+
 func _update() -> void:
+	_layout()
 	var t := _ease(clock, LOGO_IN, 1.0)
-	var size := LOGO_SIZE * lerpf(0.82, 1.0, t)
+	var size := LOGO_SIZE * u * lerpf(0.82, 1.0, t)
+	logo.position = logo_center
 	logo.scale = Vector2.ONE * size / logo.texture.get_width()
 	logo.modulate.a = t
 	var logo_material := logo.material as ShaderMaterial
 	logo_material.set_shader_parameter("angle", -PI / 2.0 + clock * SHINE_SPEED)
 	logo_material.set_shader_parameter("strength", t * (0.9 + 0.3 * sin(clock * 3.0)))
 
-	# Highlight sweeping across the title, left to right.
-	var width := _text_width(title_font, TITLE, TITLE_SIZE, TITLE_SPACING)
-	var sweep := clampf((clock - TITLE_IN - 0.5) / 1.2, 0.0, 1.0)
 	var title_material := title.material as ShaderMaterial
-	title_material.set_shader_parameter("sweep_x", SCREEN.x / 2.0 - width / 2.0 - 120.0 + (width + 240.0) * sweep)
+	var title_y := _title_y()
+	title_material.set_shader_parameter("text_top", title_y - title_size * 0.74)
+	title_material.set_shader_parameter("text_bottom", title_y + title_size * 0.02)
+	# Highlight sweeping across the title, left to right.
+	var width := _text_width(title_font, TITLE, title_size, TITLE_SPACING * u)
+	var sweep := clampf((clock - TITLE_IN - 0.5) / 1.2, 0.0, 1.0)
+	title_material.set_shader_parameter("sweep_x", screen.x / 2.0 - width / 2.0 - 120.0 * u + (width + 240.0 * u) * sweep)
+	title_material.set_shader_parameter("sweep_width", 60.0 * u)
 
 	queue_redraw()
 	text_back.queue_redraw()
@@ -109,17 +129,17 @@ func _font(weight: int) -> Font:
 
 ## Background, drawn behind the logo.
 func _draw() -> void:
-	draw_rect(Rect2(Vector2.ZERO, SCREEN), BG)
+	draw_rect(Rect2(Vector2.ZERO, screen), BG)
 	var t := _ease(clock, LOGO_IN, 1.0)
 	for i in 12:
-		draw_circle(LOGO_CENTER, lerpf(420.0, 140.0, i / 11.0), Color(BG_GLOW, 0.12 * t))
+		draw_circle(logo_center, lerpf(420.0, 140.0, i / 11.0) * u, Color(BG_GLOW, 0.12 * t))
 	var pulse := 0.5 + 0.5 * sin(clock * 2.2)
-	draw_circle(LOGO_CENTER, LOGO_SIZE / 2.0 + 14.0, Color(BLUE, 0.10 * t * (0.6 + 0.4 * pulse)))
+	draw_circle(logo_center, (LOGO_SIZE / 2.0 + 14.0) * u, Color(BLUE, 0.10 * t * (0.6 + 0.4 * pulse)))
 
 
 ## Title shadow and the website, under the chrome title.
 func _draw_text_back() -> void:
-	_draw_letters(text_back, title_font, TITLE, TITLE_SIZE, TITLE_SPACING, _title_y() + 3.0, SHADOW, TITLE_IN, 0.8)
+	_draw_letters(text_back, title_font, TITLE, title_size, TITLE_SPACING * u, _title_y() + 3.0 * u, SHADOW, TITLE_IN, 0.8)
 	_draw_website()
 
 
@@ -129,40 +149,41 @@ func _draw_website() -> void:
 	if t <= 0.0:
 		return
 	var color := Color(WEBSITE_COLOR, WEBSITE_COLOR.a * t)
-	var icon_radius := WEBSITE_SIZE * 0.36
-	var gap := 8.0
-	var text_width := website_font.get_string_size(WEBSITE, HORIZONTAL_ALIGNMENT_LEFT, -1, WEBSITE_SIZE).x
-	var x := SCREEN.x / 2.0 - (icon_radius * 2.0 + gap + text_width) / 2.0
-	var y := WEBSITE_Y + (1.0 - t) * 8.0
-	_draw_globe(text_back, Vector2(x + icon_radius, y - WEBSITE_SIZE * 0.36), icon_radius, color)
-	text_back.draw_string(website_font, Vector2(x + icon_radius * 2.0 + gap, y), WEBSITE, HORIZONTAL_ALIGNMENT_LEFT, -1, WEBSITE_SIZE, color)
+	var icon_radius := website_size * 0.36
+	var gap := 8.0 * u
+	var text_width := website_font.get_string_size(WEBSITE, HORIZONTAL_ALIGNMENT_LEFT, -1, website_size).x
+	var x := screen.x / 2.0 - (icon_radius * 2.0 + gap + text_width) / 2.0
+	var y := screen.y / 2.0 + (WEBSITE_OFFSET + (1.0 - t) * 8.0) * u
+	_draw_globe(text_back, Vector2(x + icon_radius, y - website_size * 0.36), icon_radius, color)
+	text_back.draw_string(website_font, Vector2(x + icon_radius * 2.0 + gap, y), WEBSITE, HORIZONTAL_ALIGNMENT_LEFT, -1, website_size, color)
 
 
 ## Thin outline globe: circle, equator and two meridians.
 func _draw_globe(canvas: CanvasItem, center: Vector2, radius: float, color: Color) -> void:
-	canvas.draw_arc(center, radius, 0.0, TAU, 32, color, 1.4, true)
-	canvas.draw_line(center - Vector2(radius, 0), center + Vector2(radius, 0), color, 1.2, true)
+	var line := maxf(1.0, 1.3 * u)
+	canvas.draw_arc(center, radius, 0.0, TAU, 32, color, line, true)
+	canvas.draw_line(center - Vector2(radius, 0), center + Vector2(radius, 0), color, line, true)
 	var meridian := PackedVector2Array()
 	for i in 25:
 		var a := TAU * i / 24.0
 		meridian.append(center + Vector2(cos(a) * radius * 0.42, sin(a) * radius))
-	canvas.draw_polyline(meridian, color, 1.2, true)
+	canvas.draw_polyline(meridian, color, line, true)
 
 
 ## Drawn white; the chrome shader on this node gives it the metal gradient.
 func _draw_title() -> void:
-	_draw_letters(title, title_font, TITLE, TITLE_SIZE, TITLE_SPACING, _title_y(), Color.WHITE, TITLE_IN, 0.8)
+	_draw_letters(title, title_font, TITLE, title_size, TITLE_SPACING * u, _title_y(), Color.WHITE, TITLE_IN, 0.8)
 
 
 ## Fade in from black at the start and out to black at the end.
 func _draw_fade() -> void:
 	var dark := maxf(1.0 - clock / 0.4, clampf((clock - fade_start) / FADE_TIME, 0.0, 1.0))
 	if dark > 0.0:
-		fade.draw_rect(Rect2(Vector2.ZERO, SCREEN), Color(0, 0, 0, dark))
+		fade.draw_rect(Rect2(Vector2.ZERO, screen), Color(0, 0, 0, dark))
 
 
 func _title_y() -> float:
-	return TITLE_Y + (1.0 - _ease(clock, TITLE_IN, 0.8)) * 24.0
+	return screen.y / 2.0 + (TITLE_OFFSET + (1.0 - _ease(clock, TITLE_IN, 0.8)) * 24.0) * u
 
 
 ## Centered text, revealed letter by letter from `start` over `length` seconds.
@@ -170,7 +191,7 @@ func _draw_letters(canvas: CanvasItem, font: Font, text: String, size: int, spac
 	var t := _ease(clock, start, length)
 	if t <= 0.0:
 		return
-	var x := SCREEN.x / 2.0 - _text_width(font, text, size, spacing) / 2.0
+	var x := screen.x / 2.0 - _text_width(font, text, size, spacing) / 2.0
 	for i in text.length():
 		var letter := text[i]
 		var letter_t := clampf(t * text.length() - i * 0.5, 0.0, 1.0)
