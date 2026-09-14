@@ -37,4 +37,15 @@ set "GODOT_CONSOLE=%GODOT:.exe=_console.exe%"
 rem .NET (mono) builds use their own templates; "mono" in the path marks them.
 set "TEMPLATES=%APPDATA%\Godot\export_templates\%GODOT_VERSION%.stable"
 if not "%GODOT:mono=%"=="%GODOT%" set "TEMPLATES=%TEMPLATES%.mono"
+
+rem Shared code (like the intro) lives in common\ next to this file. Godot can only load files
+rem inside the project, so each folder in it is mirrored into <game>\common\ before every run.
+rem Edit the files in the root common\, not the copies: the copies are overwritten each time.
+for /d %%d in ("%~dp0common\*") do (
+    robocopy "%%d" "%PROJECT%\common\%%~nxd" /MIR /NJH /NJS /NFL /NDL /NP >nul
+    if errorlevel 8 (
+        echo Could not copy %%d into %PROJECT%\common
+        exit /b 1
+    )
+)
 exit /b 0
