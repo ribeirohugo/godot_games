@@ -13,7 +13,9 @@ var max_area := 6
 
 
 ## Returns {"solution": Array of Rect2i, "clues": Array of {cell, area, shape, show_area, show_shape}}.
-func generate(size: int, seed_value: int) -> Dictionary:
+## `full_clues` is the chance a clue starts with both its number and its shape (easier);
+## the rest show only one of them, more often the number.
+func generate(size: int, seed_value: int, full_clues := 0.3) -> Dictionary:
 	n = size
 	rng.seed = seed_value
 	max_area = {5: 5, 6: 6, 7: 8, 8: 9, 9: 10}.get(size, 8)
@@ -22,10 +24,11 @@ func generate(size: int, seed_value: int) -> Dictionary:
 		var clues := []
 		for rect: Rect2i in rects:
 			var cell := (rect.position.y + rng.randi_range(0, rect.size.y - 1)) * n + rect.position.x + rng.randi_range(0, rect.size.x - 1)
-			var roll := rng.randf()
+			var full := rng.randf() < full_clues
+			var number := full or rng.randf() < 0.6
 			clues.append({
 				"cell": cell, "area": rect.get_area(), "shape": shape_of(rect.size),
-				"show_area": roll < 0.75, "show_shape": roll >= 0.45,
+				"show_area": number, "show_shape": full or not number,
 			})
 		if _make_unique(clues, rects):
 			return {"solution": rects, "clues": clues}

@@ -2,17 +2,24 @@ extends Node2D
 ## Queens: place one queen in every row, column and colored region. Queens can't touch,
 ## not even diagonally. Tap a cell once for ×, twice for a queen; drag to mark many ×.
 ## Right click places or removes a queen. Keys: arrows move, Space cycles, Q queen, X mark,
-## Backspace clears, Z undoes, H gives a hint.
+## Backspace clears, Z undoes, H gives a hint. Xbox gamepads work too (see _pad_input).
 
 const GeneratorScript := preload("res://scripts/generator.gd")
 const SfxScript := preload("res://scripts/sfx.gd")
 
 const SCREEN := Vector2(700, 940)
 const BOARD := Rect2(40, 196, 620, 620)
-const SIZES := [6, 7, 8, 9, 10]
-const DAILY_SIZES := [7, 8, 9, 8, 9, 10, 8]  # by weekday, Monday first
-const DAILY_EPOCH := "2026-01-01"
+## Difficulty levels: bigger boards have more regions to reason about.
+const LEVELS := [
+	{"name": "Easy", "size": 7},
+	{"name": "Medium", "size": 8},
+	{"name": "Hard", "size": 9},
+]
 const SAVE_PATH := "user://queens.cfg"
+const STICK_PRESS := 0.5  # left stick counts as a direction past this
+const STICK_RELEASE := 0.3  # and lets go under this
+const PAD_REPEAT_DELAY := 0.32  # holding a direction: wait this long, then
+const PAD_REPEAT := 0.09  # move again this often
 
 enum Mark { EMPTY, CROSS, QUEEN }
 
@@ -28,12 +35,9 @@ const RED := Color("d5000f")
 const GREEN := Color("057642")
 const REGION_COLORS := ["bba3e2", "ffc992", "96beff", "b3dfa0", "dfdfdf", "ff7b60", "e6f388", "b9b29e", "dfa0bf", "a3d2d8", "f1c4e4", "8fe3c4"]
 
-var mode := "daily"
+var level := 1
 var size := 8
-var practice_size := 8
 var auto_cross := true
-var puzzle_label := ""
-var daily_key := ""
 
 var regions := PackedInt32Array()
 var solution := PackedInt32Array()
@@ -51,8 +55,7 @@ var hint_cell := -1
 var hint_text := ""
 var hint_time := 0.0
 var new_best := false
-var best := {}  # "size" -> seconds
-var daily_done := {}  # date -> seconds
+var best := {}  # level name -> seconds
 
 var conflict_cells := {}
 var bad_queens := {}
@@ -64,6 +67,18 @@ var stroke_cell := -1
 var stroke_prev := Mark.EMPTY
 var stroke_mode := ""  # "" while it's still a tap, "mark" or "erase" once dragging
 var stroke_changes := []
+
+# Gamepad.
+var using_pad := false
+var pad_device := 0
+var stick := Vector2.ZERO
+var stick_dir := Vector2i.ZERO
+var held_dir := Vector2i.ZERO  # direction held on the D-pad or stick
+var repeat_timer := 0.0
+var x_held := false
+var triggers := [false, false]
+var focus := ""  # button selected with the gamepad or keyboard; "" when the board cursor has focus
+var nav_active := false  # gamepad or keyboard navigation in use (the mouse turns it off)
 var confetti := []
 var clock := 0.0
 
@@ -79,10 +94,7 @@ func _ready() -> void:
 	sfx = SfxScript.new()
 	add_child(sfx)
 	_load()
-	if mode == "daily":
-		_new_daily()
-	else:
-		_new_practice()
+	_new_game()
 
 
 func _notification(what: int) -> void:
@@ -106,29 +118,14 @@ func _font(weight: int) -> Font:
 
 # --- Puzzles -------------------------------------------------------------------------------
 
-func _today() -> Dictionary:
-	var date := Time.get_date_dict_from_system()
-	var key := "%04d-%02d-%02d" % [date.year, date.month, date.day]
-	var day := int(Time.get_unix_time_from_datetime_string(key) / 86400.0)
-	var epoch := int(Time.get_unix_time_from_datetime_string(DAILY_EPOCH) / 86400.0)
-	return {"key": key, "day": day, "number": day - epoch + 1, "weekday": date.weekday}
-
-
-func _new_daily() -> void:
-	var today := _today()
-	mode = "daily"
-	daily_key = today.key
-	var weekday: int = (int(today.weekday) + 6) % 7
-	_start_puzzle(DAILY_SIZES[weekday], today.day * 7919 + 17)
-	puzzle_label = "Daily #%d" % today.number
+## A fresh random puzzle at the current difficulty level.
+func _new_game() -> void:
+	_start_puzzle(LEVELS[level].size, randi())
 	_save()
 
 
-func _new_practice() -> void:
-	mode = "practice"
-	_start_puzzle(practice_size, randi())
-	puzzle_label = "Practice"
-	_save()
+func _level_name() -> String:
+	return LEVELS[level].name
 
 
 func _start_puzzle(new_size: int, seed_value: int) -> void:
@@ -248,8 +245,11 @@ func _commit(sound: String) -> void:
 	_update_conflicts()
 	if not had_conflicts and not bad_queens.is_empty():
 		sfx.play("conflict")
+		_rumble(0.3, 0.5, 0.18)
 	else:
 		sfx.play(sound)
+		if sound == "queen":
+			_rumble(0.25, 0.0, 0.06)
 	if _queen_count() == size and bad_queens.is_empty():
 		_win()
 
@@ -312,14 +312,13 @@ func _win() -> void:
 	win_clock = 0.0
 	cursor = -1
 	var seconds := int(elapsed)
-	var key := str(size)
+	var key := _level_name()
 	if hints_used == 0 and (not best.has(key) or seconds < int(best[key])):
 		new_best = best.has(key)
 		best[key] = seconds
-	if mode == "daily" and not daily_done.has(daily_key):
-		daily_done[daily_key] = seconds
 	_save()
 	sfx.play("win")
+	_rumble(0.5, 0.7, 0.45)
 	for i in 90:
 		confetti.append({
 			"pos": Vector2(BOARD.get_center().x + randf_range(-200, 200), BOARD.position.y + randf_range(-40, 40)),
@@ -337,6 +336,14 @@ func _process(delta: float) -> void:
 	if won:
 		win_clock += delta
 	hint_time = maxf(0.0, hint_time - delta)
+	if nav_active:
+		_fix_focus()  # e.g. jump to the result card's buttons when it appears
+	# Holding a direction on the gamepad keeps moving the cursor.
+	if held_dir != Vector2i.ZERO:
+		repeat_timer -= delta
+		if repeat_timer <= 0.0:
+			repeat_timer = PAD_REPEAT
+			_pad_move(held_dir)
 	for c: Dictionary in confetti:
 		c.vel.y += 700.0 * delta
 		c.vel.x *= 0.99
@@ -350,6 +357,15 @@ func _process(delta: float) -> void:
 # --- Input ----------------------------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
+	if event is InputEventJoypadButton or event is InputEventJoypadMotion:
+		_pad_input(event)
+		return
+	if event is InputEventKey:
+		using_pad = false
+	elif event is InputEventMouseButton:
+		using_pad = false
+		nav_active = false
+		focus = ""
 	if event is InputEventMouseMotion:
 		hover_button = _button_at(event.position)
 		var cell := _cell_at(event.position)
@@ -389,6 +405,231 @@ func _unhandled_input(event: InputEvent) -> void:
 		_key(event)
 
 
+## Xbox-style gamepad: D-pad / left stick move, A cycles, X ×, Y queen, B clears, LB undo,
+## RB hint, LT / RT change level, Start new game, View toggles auto ×.
+func _pad_input(event: InputEvent) -> void:
+	if event is InputEventJoypadMotion:
+		match event.axis:
+			JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y:
+				if event.axis == JOY_AXIS_LEFT_X:
+					stick.x = event.axis_value
+				else:
+					stick.y = event.axis_value
+				var dir := Vector2i.ZERO
+				if stick.length() >= STICK_PRESS:
+					dir = Vector2i(int(signf(stick.x)), 0) if absf(stick.x) > absf(stick.y) else Vector2i(0, int(signf(stick.y)))
+				elif stick.length() > STICK_RELEASE and stick_dir != Vector2i.ZERO:
+					dir = stick_dir  # between the two thresholds: keep the current direction
+				if dir != stick_dir:
+					stick_dir = dir
+					_pad_hold(dir)
+			JOY_AXIS_TRIGGER_LEFT, JOY_AXIS_TRIGGER_RIGHT:
+				var index := 0 if event.axis == JOY_AXIS_TRIGGER_LEFT else 1
+				var down: bool = event.axis_value > 0.6
+				if down and not triggers[index]:
+					_use_pad(event)
+					var next := clampi(level + (-1 if index == 0 else 1), 0, LEVELS.size() - 1)
+					if next != level:
+						_press("level_%d" % next)
+				triggers[index] = event.axis_value > 0.3 if triggers[index] else down
+		return
+
+	var button := event as InputEventJoypadButton
+	var dpad := {JOY_BUTTON_DPAD_UP: Vector2i.UP, JOY_BUTTON_DPAD_DOWN: Vector2i.DOWN,
+			JOY_BUTTON_DPAD_LEFT: Vector2i.LEFT, JOY_BUTTON_DPAD_RIGHT: Vector2i.RIGHT}
+	if dpad.has(button.button_index):
+		if button.pressed:
+			_pad_hold(dpad[button.button_index])
+		elif held_dir == dpad[button.button_index]:
+			_pad_hold(Vector2i.ZERO)
+		return
+	if button.button_index == JOY_BUTTON_X and not button.pressed and x_held:
+		x_held = false
+		_commit("mark")
+		return
+	if not button.pressed:
+		return
+	var had_cursor := cursor >= 0 or focus != ""
+	_use_pad(event)
+	# Shortcuts that work wherever the focus is.
+	match button.button_index:
+		JOY_BUTTON_START:
+			_press("new")
+			return
+		JOY_BUTTON_LEFT_SHOULDER:
+			_undo()
+			return
+		JOY_BUTTON_RIGHT_SHOULDER:
+			_hint()
+			return
+		JOY_BUTTON_BACK:
+			if not won:
+				_press("auto")
+			return
+	if focus != "":
+		# On a button: A presses it, B goes back to the board (or dismisses the result card).
+		match button.button_index:
+			JOY_BUTTON_A:
+				_press(focus)
+				_fix_focus()
+			JOY_BUTTON_B:
+				if won and not card_hidden:
+					_press("view")
+					_fix_focus()
+				elif not won:
+					focus = ""
+					_start_nav()  # show the board cursor right away
+					sfx.play("click")
+		return
+	if won:
+		return
+	if not had_cursor and button.button_index in [JOY_BUTTON_A, JOY_BUTTON_X, JOY_BUTTON_Y, JOY_BUTTON_B]:
+		sfx.play("click")  # the first press just shows where the cursor is
+		return
+	match button.button_index:
+		JOY_BUTTON_A:
+			_cycle(cursor)
+		JOY_BUTTON_X:
+			# Toggle ×; keep X held and move to mark (or erase) a line of cells.
+			stroke_mode = "erase" if marks[cursor] == Mark.CROSS else "mark"
+			stroke_changes = []
+			_set_mark(cursor, Mark.EMPTY if marks[cursor] == Mark.CROSS else Mark.CROSS)
+			x_held = true
+			sfx.play("mark")
+		JOY_BUTTON_Y:
+			_set_mark(cursor, Mark.EMPTY if marks[cursor] == Mark.QUEEN else Mark.QUEEN)
+			_commit("queen" if marks[cursor] == Mark.QUEEN else "remove")
+		JOY_BUTTON_B:
+			_set_mark(cursor, Mark.EMPTY)
+			_commit("remove")
+
+
+## Marks the gamepad as the active input (for its hints and rumble), then starts navigation.
+func _use_pad(event: InputEvent) -> void:
+	using_pad = true
+	pad_device = event.device
+	_start_nav()
+
+
+## Gamepad or keyboard navigation is in use: make sure something has the focus, the board
+## cursor or a button when the board isn't playable.
+func _start_nav() -> void:
+	nav_active = true
+	stroke_cell = -1
+	_fix_focus()
+	if cursor < 0 and focus == "" and not won:
+		cursor = (size / 2) * size + size / 2
+
+
+## Starts (or stops, with ZERO) moving in a direction.
+func _pad_hold(dir: Vector2i) -> void:
+	held_dir = dir
+	if dir == Vector2i.ZERO:
+		return
+	var had_focus := cursor >= 0 or focus != ""
+	using_pad = true
+	_start_nav()
+	if had_focus or won:
+		_pad_move(dir)
+	else:
+		sfx.play("click")
+	repeat_timer = PAD_REPEAT_DELAY
+
+
+## Rows the gamepad moves through, top to bottom: arrays of button ids, and "board".
+func _nav_rows() -> Array:
+	if won and not card_hidden:
+		return [["new", "view"]] if win_clock > 0.9 else []
+	var list := _buttons()
+	var header := []
+	for i in LEVELS.size():
+		header.append("level_%d" % i)
+	header.append("new")
+	var bottom := []
+	for id in ["undo", "clear", "hint", "auto", "results"]:
+		if list.has(id):
+			bottom.append(id)
+	return [header, bottom] if won else [header, "board", bottom]
+
+
+## Keeps the focus on something that exists (buttons come and go as the game changes).
+func _fix_focus() -> void:
+	var rows := _nav_rows()
+	if rows.is_empty():
+		return
+	var ids := []
+	for row in rows:
+		if row is Array:
+			ids.append_array(row)
+	if focus == "" and not rows.has("board"):
+		focus = ids[0] if won and not card_hidden else ids.back()
+	elif focus != "" and not ids.has(focus):
+		focus = "" if rows.has("board") else (ids[0] if won and not card_hidden else ids.back())
+
+
+func _pad_move(dir: Vector2i) -> void:
+	var rows := _nav_rows()
+	if rows.is_empty():
+		return
+	_fix_focus()
+	var list := _buttons()
+	var row_index := rows.find("board") if focus == "" else -1
+	for i in rows.size():
+		if rows[i] is Array and rows[i].has(focus):
+			row_index = i
+	if row_index < 0:
+		return
+	var at_x: float = _cell_rect(cursor).get_center().x if focus == "" else list[focus].get_center().x
+
+	if dir.x != 0:
+		if focus == "":
+			var col := clampi(cursor % size + dir.x, 0, size - 1)
+			if cursor / size * size + col != cursor:
+				cursor = cursor / size * size + col
+				_moved_on_board()
+		else:
+			var row: Array = rows[row_index]
+			var next: String = row[clampi(row.find(focus) + dir.x, 0, row.size() - 1)]
+			if next != focus:
+				focus = next
+				sfx.play("click")
+		return
+
+	if focus == "":
+		var new_row := cursor / size + dir.y
+		if new_row >= 0 and new_row < size:
+			cursor = new_row * size + cursor % size
+			_moved_on_board()
+			return
+	var target := row_index + dir.y
+	if target < 0 or target >= rows.size():
+		return
+	if rows[target] is String:
+		# Back onto the board, in the column nearest to the button we came from.
+		var unit := BOARD.size.x / size
+		var col := clampi(int((at_x - BOARD.position.x) / unit), 0, size - 1)
+		cursor = (0 if dir.y > 0 else size - 1) * size + col
+		focus = ""
+	else:
+		var best_id := ""
+		for id: String in rows[target]:
+			if best_id == "" or absf(list[id].get_center().x - at_x) < absf(list[best_id].get_center().x - at_x):
+				best_id = id
+		focus = best_id
+	sfx.play("click")
+
+
+func _moved_on_board() -> void:
+	sfx.play("click")
+	if x_held:
+		_stroke_apply(cursor)
+
+
+func _rumble(weak: float, strong: float, duration: float) -> void:
+	if using_pad:
+		Input.start_joy_vibration(pad_device, weak, strong, duration)
+
+
 func _stroke_apply(cell: int) -> void:
 	if stroke_mode == "mark" and marks[cell] == Mark.EMPTY:
 		_set_mark(cell, Mark.CROSS)
@@ -411,27 +652,39 @@ func _key(event: InputEventKey) -> void:
 	match code:
 		KEY_H:
 			_hint()
+			return
 		KEY_N:
-			if mode == "practice":
-				_new_practice()
-		KEY_ESCAPE:
-			if won and not card_hidden:
-				card_hidden = true
-	if won:
-		return
+			_new_game()
+			return
+	# Arrows / WASD move like the gamepad: across the board and, past its edges, onto the buttons.
 	var moves := {KEY_UP: Vector2i(0, -1), KEY_DOWN: Vector2i(0, 1), KEY_LEFT: Vector2i(-1, 0), KEY_RIGHT: Vector2i(1, 0),
 			KEY_W: Vector2i(0, -1), KEY_S: Vector2i(0, 1), KEY_A: Vector2i(-1, 0), KEY_D: Vector2i(1, 0)}
 	if moves.has(code):
-		if cursor < 0:
-			cursor = (size / 2) * size + size / 2
+		var had_focus := cursor >= 0 or focus != ""
+		_start_nav()
+		if had_focus or won:
+			_pad_move(moves[code])
 		else:
-			var step: Vector2i = moves[code]
-			var col := clampi(cursor % size + step.x, 0, size - 1)
-			var row := clampi(cursor / size + step.y, 0, size - 1)
-			cursor = row * size + col
-		sfx.play("click")
+			sfx.play("click")  # the first press just shows the cursor
 		return
-	if cursor < 0:
+	match code:
+		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
+			if focus != "" or won:
+				_start_nav()
+				if focus != "":
+					_press(focus)
+					_fix_focus()
+				return
+		KEY_ESCAPE:
+			if won and not card_hidden:
+				_press("view")
+				_fix_focus()
+			elif focus != "" and not won:
+				focus = ""  # back to the board
+				_start_nav()
+				sfx.play("click")
+			return
+	if won or cursor < 0 or focus != "":
 		return
 	match code:
 		KEY_SPACE, KEY_ENTER, KEY_KP_ENTER:
@@ -449,17 +702,11 @@ func _key(event: InputEventKey) -> void:
 
 func _press(id: String) -> void:
 	sfx.play("click")
-	if id.begins_with("size_"):
-		practice_size = int(id.substr(5))
-		_new_practice()
+	if id.begins_with("level_"):
+		level = int(id.substr(6))
+		_new_game()
 		return
 	match id:
-		"daily":
-			if mode != "daily":
-				_new_daily()
-		"practice", "go_practice":
-			if mode != "practice":
-				_new_practice()
 		"undo":
 			_undo()
 		"clear":
@@ -470,7 +717,7 @@ func _press(id: String) -> void:
 			auto_cross = not auto_cross
 			_save()
 		"new":
-			_new_practice()
+			_new_game()
 		"view":
 			card_hidden = true
 		"results":
@@ -495,14 +742,16 @@ func _cell_at(pos: Vector2) -> int:
 
 func _buttons() -> Dictionary:
 	var list := {}
-	list["daily"] = Rect2(40, 132, 96, 40)
-	list["practice"] = Rect2(144, 132, 118, 40)
-	if mode == "practice":
-		for i in SIZES.size():
-			list["size_%d" % SIZES[i]] = Rect2(SCREEN.x - 40 - (SIZES.size() - i) * 52 + 6, 132, 46, 40)
+	# Difficulty chips on the left, New game on the right.
+	var x := 40.0
+	for i in LEVELS.size():
+		var width: float = bold.get_string_size(LEVELS[i].name, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 28.0
+		list["level_%d" % i] = Rect2(x, 132, width, 40)
+		x += width + 6.0
+	list["new"] = Rect2(SCREEN.x - 40 - 124, 132, 124, 40)
 	if won and not card_hidden and win_clock > 0.9:
 		var card := _card_rect()
-		list["new" if mode == "practice" else "go_practice"] = Rect2(card.position.x + 32, card.end.y - 72, 180, 48)
+		list["new"] = Rect2(card.position.x + 32, card.end.y - 72, 180, 48)
 		list["view"] = Rect2(card.end.x - 212, card.end.y - 72, 180, 48)
 		return list
 	var y := BOARD.end.y + 26
@@ -514,9 +763,7 @@ func _buttons() -> Dictionary:
 		list.erase("undo")
 		list.erase("clear")
 		list.erase("hint")
-		list["results"] = Rect2(40, y, 290, 48)
-		if mode == "practice":
-			list["new"] = Rect2(340, y, 140, 48)
+		list["results"] = Rect2(40, y, 440, 48)
 	return list
 
 
@@ -540,9 +787,9 @@ func _draw() -> void:
 	# Header.
 	_crown(Vector2(62, 76), 38.0, INK)
 	_text(Vector2(92, 92), "Queens", 38, INK, bold)
-	var sub := "%s · %d×%d" % [puzzle_label, size, size]
-	if mode == "daily" and daily_done.has(daily_key) and not won:
-		sub += "  ·  solved today in %s" % _time(int(daily_done[daily_key]))
+	var sub := "%s · %d×%d" % [_level_name(), size, size]
+	if best.has(_level_name()):
+		sub += "  ·  best %s" % _time(int(best[_level_name()]))
 	_text(Vector2(40, 118), sub, 16, MUTED, font)
 	var timer_rect := Rect2(SCREEN.x - 160, 50, 120, 46)
 	_box(timer_rect, CARD, Color(0, 0, 0, 0.15), 23)
@@ -550,19 +797,16 @@ func _draw() -> void:
 	_text(timer_rect.position + Vector2(44, 31), _time(int(elapsed)), 20, GREEN if won else INK, bold)
 
 	var buttons := _buttons()
-	_tab(buttons.get("daily", Rect2()), "Daily", mode == "daily")
-	_tab(buttons.get("practice", Rect2()), "Practice", mode == "practice")
-	if mode == "practice":
-		for s in SIZES:
-			_tab(buttons["size_%d" % s], "%d" % s, s == size)
+	for i in LEVELS.size():
+		_tab(buttons["level_%d" % i], LEVELS[i].name, i == level)
+	if not (won and not card_hidden and win_clock > 0.9):
+		_button(buttons.new, "New game", "new", true)
 
 	_draw_board()
 
 	# Bottom controls.
 	if won and card_hidden:
 		_button(buttons.results, "Solved in %s  ·  See results" % _time(int(elapsed)), "results", true)
-		if buttons.has("new"):
-			_button(buttons.new, "New puzzle", "new")
 	elif not won or card_hidden or win_clock <= 0.9:
 		_button(buttons.get("undo", Rect2(40, BOARD.end.y + 26, 140, 48)), "Undo", "undo")
 		_button(buttons.get("clear", Rect2(190, BOARD.end.y + 26, 140, 48)), "Clear", "clear")
@@ -573,7 +817,10 @@ func _draw() -> void:
 	if hint_time > 0.0 and hint_cell >= 0:
 		_text(Vector2(SCREEN.x / 2, BOARD.position.y - 10), hint_text, 16, BLUE, bold, true)
 	else:
-		_text(Vector2(SCREEN.x / 2, SCREEN.y - 26), "One queen in each row, column and color. Queens can't touch, not even diagonally.", 15, MUTED, font, true)
+		var help := "One queen in each row, column and color. Queens can't touch, not even diagonally."
+		if using_pad:
+			help = "A cycle  ·  X ×  ·  Y queen  ·  B clear  ·  LB undo  ·  RB hint  ·  LT/RT level  ·  Start new"
+		_text(Vector2(SCREEN.x / 2, SCREEN.y - 26), help, 15, MUTED, font, true)
 
 	for c: Dictionary in confetti:
 		draw_set_transform(c.pos, c.spin, Vector2.ONE)
@@ -582,6 +829,12 @@ func _draw() -> void:
 
 	if won and not card_hidden and win_clock > 0.9:
 		_draw_result_card()
+
+	# Focus ring on the button selected with the gamepad or keyboard.
+	if nav_active and focus != "":
+		var list := _buttons()
+		if list.has(focus):
+			_box(list[focus].grow(4), Color(0, 0, 0, 0), BLUE, 26, 3)
 
 
 func _draw_board() -> void:
@@ -634,7 +887,7 @@ func _draw_board() -> void:
 		var rect := _cell_rect(hint_cell).grow(-2)
 		draw_rect(rect, Color(BLUE, 0.15 + 0.15 * pulse))
 		draw_rect(rect, BLUE, false, 4.0)
-	if cursor >= 0:
+	if cursor >= 0 and focus == "":
 		draw_rect(_cell_rect(cursor).grow(-3), BLUE, false, 3.0)
 
 
@@ -648,21 +901,19 @@ func _draw_result_card() -> void:
 	var cx := card.get_center().x
 	_crown(Vector2(cx, card.position.y + 52), 44.0, Color(GREEN, appear))
 	_text(Vector2(cx, card.position.y + 118), "You win!", 34, Color(INK, appear), bold, true)
-	_text(Vector2(cx, card.position.y + 148), "%s · %d×%d" % [puzzle_label, size, size], 16, Color(MUTED, appear), font, true)
+	_text(Vector2(cx, card.position.y + 148), "%s · %d×%d" % [_level_name(), size, size], 16, Color(MUTED, appear), font, true)
 	_text(Vector2(cx, card.position.y + 206), _time(int(elapsed)), 44, Color(INK, appear), bold, true)
 	var detail := ""
 	if hints_used > 0:
 		detail = "%d hint%s used · not counted for best time" % [hints_used, "" if hints_used == 1 else "s"]
 	elif new_best:
-		detail = "New best time for %d×%d!" % [size, size]
-	elif best.has(str(size)):
-		detail = "Best %d×%d: %s" % [size, size, _time(int(best[str(size)]))]
+		detail = "New best time on %s!" % _level_name()
+	elif best.has(_level_name()):
+		detail = "Best on %s: %s" % [_level_name(), _time(int(best[_level_name()]))]
 	_text(Vector2(cx, card.position.y + 238), detail, 15, Color(BLUE if new_best else MUTED, appear), font, true)
 	var buttons := _buttons()
 	if buttons.has("new"):
-		_button(buttons.new, "New puzzle", "new", true)
-	if buttons.has("go_practice"):
-		_button(buttons.go_practice, "Play practice", "go_practice", true)
+		_button(buttons.new, "New game", "new", true)
 	if buttons.has("view"):
 		_button(buttons.view, "View board", "view")
 
@@ -751,7 +1002,7 @@ func _tab(rect: Rect2, label: String, active: bool) -> void:
 			id = key
 	var hovered := hover_button == id and id != ""
 	if active:
-		_box(rect, Color("01754f") if id.begins_with("size_") else INK, Color(0, 0, 0, 0), 20)
+		_box(rect, Color("01754f") if id.begins_with("level_") else INK, Color(0, 0, 0, 0), 20)
 		_text(rect.get_center() + Vector2(0, 6), label, 16, Color.WHITE, bold, true)
 	else:
 		_box(rect, Color("ebebeb") if hovered else CARD, Color(0, 0, 0, 0.35), 20)
@@ -778,23 +1029,14 @@ func _load() -> void:
 	if config.has_section("best"):
 		for key in config.get_section_keys("best"):
 			best[key] = int(config.get_value("best", key))
-	if config.has_section("daily"):
-		for key in config.get_section_keys("daily"):
-			daily_done[key] = int(config.get_value("daily", key))
 	auto_cross = bool(config.get_value("settings", "auto_cross", true))
-	practice_size = int(config.get_value("settings", "practice_size", 8))
-	if not SIZES.has(practice_size):
-		practice_size = 8
-	mode = str(config.get_value("settings", "mode", "daily"))
+	level = clampi(int(config.get_value("settings", "level", 1)), 0, LEVELS.size() - 1)
 
 
 func _save() -> void:
 	var config := ConfigFile.new()
 	for key in best:
 		config.set_value("best", key, best[key])
-	for key in daily_done:
-		config.set_value("daily", key, daily_done[key])
 	config.set_value("settings", "auto_cross", auto_cross)
-	config.set_value("settings", "practice_size", practice_size)
-	config.set_value("settings", "mode", mode)
+	config.set_value("settings", "level", level)
 	config.save(SAVE_PATH)

@@ -1,6 +1,7 @@
 extends Node2D
 ## Snake: steer the snake to eat apples and grow, without hitting the walls or yourself.
-## Arrows / WASD steer, P or Esc pauses. Behind the menu the snake plays by itself.
+## Arrows / WASD or a gamepad (D-pad / left stick) steer; P, Esc or Start pauses.
+## Behind the menu the snake plays by itself.
 
 const SfxScript := preload("res://scripts/sfx.gd")
 
@@ -27,6 +28,8 @@ const TAIL_RADIUS := 3.5
 const SAMPLE_SPACING := 4.0  # body is drawn as circles this far apart along its path
 const SHADOW_OFFSET := Vector2(5, 7)
 const OPTION_HEIGHT := 54.0
+const STICK_PRESS := 0.55  # left stick counts as a direction past this
+const STICK_RELEASE := 0.35  # and must come back under this before it counts again
 
 const GRASS_LIGHT := Color("4f8a3c")
 const GRASS_DARK := Color("467d35")
@@ -47,6 +50,12 @@ enum State { MENU, PLAY, PAUSED, DYING, OVER }
 var state := State.MENU
 var resume_state := State.PLAY
 var option_index := 0
+
+# Gamepad: which kind of input was used last, and the left stick's position.
+var using_pad := false
+var pad_device := 0
+var stick := Vector2.ZERO
+var stick_dir := Vector2i.ZERO
 
 var body: Array[Vector2i] = []  # head first
 var prev_body: Array[Vector2i] = []  # body before the last move, for smooth sliding
@@ -147,10 +156,20 @@ func _notification(what: int) -> void:
 # --- Input -------------------------------------------------------------------
 
 func _unhandled_input(event: InputEvent) -> void:
+	_track_device(event)
 	if state in [State.MENU, State.PAUSED, State.OVER]:
 		_options_input(event)
 		return
-	if state != State.PLAY or not (event is InputEventKey and event.pressed and not event.echo):
+	if state != State.PLAY:
+		return
+	if event is InputEventJoypadButton or event is InputEventJoypadMotion:
+		var turn := _pad_direction(event)
+		if turn != Vector2i.ZERO:
+			_queue_turn(turn)
+		elif event is InputEventJoypadButton and event.pressed and event.button_index in [JOY_BUTTON_START, JOY_BUTTON_BACK]:
+			_pause()
+		return
+	if not (event is InputEventKey and event.pressed and not event.echo):
 		return
 	match event.physical_keycode:
 		KEY_UP, KEY_W:
@@ -163,6 +182,56 @@ func _unhandled_input(event: InputEvent) -> void:
 			_queue_turn(Vector2i.RIGHT)
 		KEY_P, KEY_ESCAPE:
 			_pause()
+
+
+## Remembers whether a gamepad or the keyboard/mouse was used last, for the on-screen hints
+## and for rumble.
+func _track_device(event: InputEvent) -> void:
+	if event is InputEventJoypadButton or (event is InputEventJoypadMotion and absf(event.axis_value) > STICK_PRESS):
+		using_pad = true
+		pad_device = event.device
+	elif event is InputEventKey or event is InputEventMouseButton:
+		using_pad = false
+
+
+## A direction from the D-pad, or from the left stick once it's pushed past the deadzone.
+## The stick gives one direction per push: it must return toward the center (or swing to
+## another direction) before it counts again.
+func _pad_direction(event: InputEvent) -> Vector2i:
+	if event is InputEventJoypadButton:
+		if not event.pressed:
+			return Vector2i.ZERO
+		match event.button_index:
+			JOY_BUTTON_DPAD_UP:
+				return Vector2i.UP
+			JOY_BUTTON_DPAD_DOWN:
+				return Vector2i.DOWN
+			JOY_BUTTON_DPAD_LEFT:
+				return Vector2i.LEFT
+			JOY_BUTTON_DPAD_RIGHT:
+				return Vector2i.RIGHT
+		return Vector2i.ZERO
+	if not (event is InputEventJoypadMotion and event.axis in [JOY_AXIS_LEFT_X, JOY_AXIS_LEFT_Y]):
+		return Vector2i.ZERO
+	if event.axis == JOY_AXIS_LEFT_X:
+		stick.x = event.axis_value
+	else:
+		stick.y = event.axis_value
+	if stick.length() < STICK_RELEASE:
+		stick_dir = Vector2i.ZERO
+		return Vector2i.ZERO
+	if stick.length() < STICK_PRESS:
+		return Vector2i.ZERO
+	var dir_now := Vector2i(int(signf(stick.x)), 0) if absf(stick.x) > absf(stick.y) else Vector2i(0, int(signf(stick.y)))
+	if dir_now == stick_dir:
+		return Vector2i.ZERO
+	stick_dir = dir_now
+	return dir_now
+
+
+func _rumble(weak: float, strong: float, duration: float) -> void:
+	if using_pad:
+		Input.start_joy_vibration(pad_device, weak, strong, duration)
 
 
 ## Remembers up to two turns, so quick key presses between moves aren't lost.
@@ -191,6 +260,22 @@ func _options_input(event: InputEvent) -> void:
 		var clicked := _option_at(event.position)
 		if clicked >= 0:
 			_choose(options[clicked])
+	elif event is InputEventJoypadButton or event is InputEventJoypadMotion:
+		var move := _pad_direction(event)
+		if move.y != 0:
+			option_index = posmod(option_index + move.y, options.size())
+			sfx.play("select")
+		elif event is InputEventJoypadButton and event.pressed:
+			match event.button_index:
+				JOY_BUTTON_A:
+					_choose(options[option_index])
+				JOY_BUTTON_START:
+					_choose("Resume" if state == State.PAUSED else options[option_index])
+				JOY_BUTTON_B:
+					if state == State.PAUSED:
+						_choose("Resume")
+					elif state == State.OVER:
+						_choose("Exit to menu")
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
 			KEY_W, KEY_UP:
@@ -371,6 +456,8 @@ func _eat(cell: Vector2i, points: int, color: Color) -> void:
 		apples += 1
 		popups.append({"pos": pos, "text": "+%d" % points, "color": color, "life": 0.9})
 		sfx.play("golden" if points == GOLDEN_POINTS else "eat")
+		if points == GOLDEN_POINTS:
+			_rumble(0.4, 0.0, 0.12)
 
 
 func _die() -> void:
@@ -385,6 +472,7 @@ func _die() -> void:
 	pop_timer = 0.35  # short freeze before the body bursts
 	over_delay = 0.8
 	sfx.play("hit")
+	_rumble(0.6, 1.0, 0.4)
 	if score > best:
 		best = score
 		new_best = true
@@ -745,7 +833,8 @@ func _draw_hud(c: CanvasItem) -> void:
 			_draw_title(c)
 			_text(c, "Eat apples, grow long, and don't bite yourself!", Vector2(SCREEN.x / 2.0, 385), 24, TEXT, 6)
 			_draw_options(c)
-			_text(c, "Arrows / WASD: steer      P / Esc: pause      Golden apples: +%d" % GOLDEN_POINTS,
+			var controls := "D-pad / stick: steer      Start: pause" if using_pad else "Arrows / WASD: steer      P / Esc: pause"
+			_text(c, "%s      Golden apples: +%d" % [controls, GOLDEN_POINTS],
 					Vector2(SCREEN.x / 2.0, 700), 18, Color(TEXT, 0.7), 5)
 		State.PAUSED:
 			c.draw_rect(board, Color(0, 0, 0, 0.55))
@@ -792,7 +881,7 @@ func _draw_options(c: CanvasItem) -> void:
 			c.draw_rect(rect, Color(0, 0, 0, 0.4))
 			c.draw_rect(rect, Color(TEXT, 0.35), false, 2.0)
 			_text(c, options[i], Vector2(SCREEN.x / 2.0, baseline), 28, TEXT)
-	_text(c, "W / S or arrows to choose, Enter or click to select",
+	_text(c, "D-pad or stick to choose, A to select" if using_pad else "W / S or arrows to choose, Enter or click to select",
 			Vector2(SCREEN.x / 2.0, _option_rect(options.size()).position.y + 20.0), 16, Color(TEXT, 0.55), 4)
 
 

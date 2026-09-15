@@ -9,9 +9,12 @@ const SfxScript := preload("res://scripts/sfx.gd")
 
 const SCREEN := Vector2(700, 940)
 const BOARD := Rect2(40, 196, 620, 620)
-const SIZES := [5, 6, 7, 8, 9]
-const DAILY_SIZES := [6, 7, 6, 8, 7, 9, 8]  # by weekday, Monday first
-const DAILY_EPOCH := "2026-01-01"
+## Difficulty levels: bigger boards, and fewer clues that show both their number and shape.
+const LEVELS := [
+	{"name": "Easy", "size": 5, "full_clues": 0.6},
+	{"name": "Medium", "size": 7, "full_clues": 0.3},
+	{"name": "Hard", "size": 9, "full_clues": 0.1},
+]
 const SAVE_PATH := "user://patches.cfg"
 
 enum Shape { SQUARE, WIDE, TALL }
@@ -29,11 +32,8 @@ const EMPTY_PATCH := Color("d9d6d0")
 const PALETTE := ["6f5ce0", "f08a24", "2f8fd8", "3fae6a", "e05297", "d9a21b", "1f9e9e", "d64545", "8c6bd6", "6f9e2c",
 		"4b6fd8", "c96b2c", "b04fb0", "2c9c86", "e07a5f", "5a7d9a", "a67c52", "c2410c", "0e7490", "9333ea"]
 
-var mode := "daily"
-var size := 6
-var practice_size := 6
-var puzzle_label := ""
-var daily_key := ""
+var level := 1
+var size := 7
 
 var clues := []  # {cell, area, shape, show_area, show_shape}
 var clue_colors: Array[Color] = []
@@ -55,8 +55,7 @@ var hint_rect := Rect2i()
 var hint_text := ""
 var hint_time := 0.0
 var new_best := false
-var best := {}
-var daily_done := {}
+var best := {}  # level name -> seconds
 
 var hover_cell := -1
 var hover_button := ""
@@ -80,10 +79,7 @@ func _ready() -> void:
 	sfx = SfxScript.new()
 	add_child(sfx)
 	_load()
-	if mode == "daily":
-		_new_daily()
-	else:
-		_new_practice()
+	_new_game()
 
 
 func _notification(what: int) -> void:
@@ -107,33 +103,19 @@ func _font(weight: int) -> Font:
 
 # --- Puzzles -------------------------------------------------------------------------------
 
-func _today() -> Dictionary:
-	var date := Time.get_date_dict_from_system()
-	var key := "%04d-%02d-%02d" % [date.year, date.month, date.day]
-	var day := int(Time.get_unix_time_from_datetime_string(key) / 86400.0)
-	var epoch := int(Time.get_unix_time_from_datetime_string(DAILY_EPOCH) / 86400.0)
-	return {"key": key, "day": day, "number": day - epoch + 1, "weekday": date.weekday}
-
-
-func _new_daily() -> void:
-	var today := _today()
-	mode = "daily"
-	daily_key = today.key
-	_start_puzzle(DAILY_SIZES[(int(today.weekday) + 6) % 7], today.day * 6151 + 29)
-	puzzle_label = "Daily #%d" % today.number
+## A fresh random puzzle at the current difficulty level.
+func _new_game() -> void:
+	_start_puzzle(LEVELS[level].size, randi())
 	_save()
 
 
-func _new_practice() -> void:
-	mode = "practice"
-	_start_puzzle(practice_size, randi())
-	puzzle_label = "Practice"
-	_save()
+func _level_name() -> String:
+	return LEVELS[level].name
 
 
 func _start_puzzle(new_size: int, seed_value: int) -> void:
 	size = new_size
-	var puzzle: Dictionary = GeneratorScript.new().generate(size, seed_value)
+	var puzzle: Dictionary = GeneratorScript.new().generate(size, seed_value, LEVELS[level].full_clues)
 	clues = puzzle.clues
 	solution = puzzle.solution
 	clue_at = PackedInt32Array()
@@ -302,12 +284,10 @@ func _win() -> void:
 	cursor = -1
 	anchor = -1
 	var seconds := int(elapsed)
-	var key := str(size)
+	var key := _level_name()
 	if hints_used == 0 and (not best.has(key) or seconds < int(best[key])):
 		new_best = best.has(key)
 		best[key] = seconds
-	if mode == "daily" and not daily_done.has(daily_key):
-		daily_done[daily_key] = seconds
 	_save()
 	sfx.play("win")
 	for i in 90:
@@ -391,8 +371,7 @@ func _key(event: InputEventKey) -> void:
 			_hint()
 			return
 		KEY_N:
-			if mode == "practice":
-				_new_practice()
+			_new_game()
 			return
 		KEY_ESCAPE:
 			if won and not card_hidden:
@@ -427,17 +406,11 @@ func _key(event: InputEventKey) -> void:
 
 func _press(id: String) -> void:
 	sfx.play("click")
-	if id.begins_with("size_"):
-		practice_size = int(id.substr(5))
-		_new_practice()
+	if id.begins_with("level_"):
+		level = int(id.substr(6))
+		_new_game()
 		return
 	match id:
-		"daily":
-			if mode != "daily":
-				_new_daily()
-		"practice", "go_practice":
-			if mode != "practice":
-				_new_practice()
 		"undo":
 			_undo()
 		"clear":
@@ -445,7 +418,7 @@ func _press(id: String) -> void:
 		"hint":
 			_hint()
 		"new":
-			_new_practice()
+			_new_game()
 		"view":
 			card_hidden = true
 		"results":
@@ -476,21 +449,21 @@ func _cell_at(pos: Vector2, snap := false) -> int:
 
 func _buttons() -> Dictionary:
 	var list := {}
-	list["daily"] = Rect2(40, 132, 96, 40)
-	list["practice"] = Rect2(144, 132, 118, 40)
-	if mode == "practice":
-		for i in SIZES.size():
-			list["size_%d" % SIZES[i]] = Rect2(SCREEN.x - 40 - (SIZES.size() - i) * 52 + 6, 132, 46, 40)
+	# Difficulty chips on the left, New game on the right.
+	var x := 40.0
+	for i in LEVELS.size():
+		var width: float = bold.get_string_size(LEVELS[i].name, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 28.0
+		list["level_%d" % i] = Rect2(x, 132, width, 40)
+		x += width + 6.0
+	list["new"] = Rect2(SCREEN.x - 40 - 124, 132, 124, 40)
 	if won and not card_hidden and win_clock > 0.9:
 		var card := _card_rect()
-		list["new" if mode == "practice" else "go_practice"] = Rect2(card.position.x + 32, card.end.y - 72, 180, 48)
+		list["new"] = Rect2(card.position.x + 32, card.end.y - 72, 180, 48)
 		list["view"] = Rect2(card.end.x - 212, card.end.y - 72, 180, 48)
 		return list
 	var y := BOARD.end.y + 26
 	if won and card_hidden:
-		list["results"] = Rect2(40, y, 390, 48)
-		if mode == "practice":
-			list["new"] = Rect2(440, y, 220, 48)
+		list["results"] = Rect2(40, y, 620, 48)
 		return list
 	list["undo"] = Rect2(40, y, 200, 48)
 	list["clear"] = Rect2(250, y, 200, 48)
@@ -518,9 +491,9 @@ func _draw() -> void:
 	# Header.
 	_logo(Vector2(40, 52), 34.0)
 	_text(Vector2(84, 92), "Patches", 38, INK, bold)
-	var sub := "%s · %d×%d" % [puzzle_label, size, size]
-	if mode == "daily" and daily_done.has(daily_key) and not won:
-		sub += "  ·  solved today in %s" % _time(int(daily_done[daily_key]))
+	var sub := "%s · %d×%d" % [_level_name(), size, size]
+	if best.has(_level_name()):
+		sub += "  ·  best %s" % _time(int(best[_level_name()]))
 	_text(Vector2(40, 118), sub, 16, MUTED, font)
 	var timer_rect := Rect2(SCREEN.x - 160, 50, 120, 46)
 	_box(timer_rect, CARD, Color(0, 0, 0, 0.15), 23)
@@ -528,18 +501,15 @@ func _draw() -> void:
 	_text(timer_rect.position + Vector2(44, 31), _time(int(elapsed)), 20, GREEN if won else INK, bold)
 
 	var buttons := _buttons()
-	_tab(buttons.daily, "Daily", mode == "daily", "daily")
-	_tab(buttons.practice, "Practice", mode == "practice", "practice")
-	if mode == "practice":
-		for s in SIZES:
-			_tab(buttons["size_%d" % s], str(s), s == size, "size_%d" % s)
+	for i in LEVELS.size():
+		_tab(buttons["level_%d" % i], LEVELS[i].name, i == level, "level_%d" % i)
+	if not (won and not card_hidden and win_clock > 0.9):
+		_button(buttons.new, "New game", "new", true)
 
 	_draw_board()
 
 	if won and card_hidden:
 		_button(buttons.results, "Solved in %s  ·  See results" % _time(int(elapsed)), "results", true)
-		if buttons.has("new"):
-			_button(buttons.new, "New puzzle", "new")
 	elif not won or win_clock <= 0.9:
 		var y := BOARD.end.y + 26
 		_button(buttons.get("undo", Rect2(40, y, 200, 48)), "Undo", "undo")
@@ -661,21 +631,19 @@ func _draw_result_card() -> void:
 	var cx := card.get_center().x
 	_logo(Vector2(cx - 22, card.position.y + 30), 44.0, appear)
 	_text(Vector2(cx, card.position.y + 118), "You win!", 34, Color(INK, appear), bold, true)
-	_text(Vector2(cx, card.position.y + 148), "%s · %d×%d" % [puzzle_label, size, size], 16, Color(MUTED, appear), font, true)
+	_text(Vector2(cx, card.position.y + 148), "%s · %d×%d" % [_level_name(), size, size], 16, Color(MUTED, appear), font, true)
 	_text(Vector2(cx, card.position.y + 206), _time(int(elapsed)), 44, Color(INK, appear), bold, true)
 	var detail := ""
 	if hints_used > 0:
 		detail = "%d hint%s used · not counted for best time" % [hints_used, "" if hints_used == 1 else "s"]
 	elif new_best:
-		detail = "New best time for %d×%d!" % [size, size]
-	elif best.has(str(size)):
-		detail = "Best %d×%d: %s" % [size, size, _time(int(best[str(size)]))]
+		detail = "New best time on %s!" % _level_name()
+	elif best.has(_level_name()):
+		detail = "Best on %s: %s" % [_level_name(), _time(int(best[_level_name()]))]
 	_text(Vector2(cx, card.position.y + 238), detail, 15, Color(BLUE if new_best else MUTED, appear), font, true)
 	var buttons := _buttons()
 	if buttons.has("new"):
-		_button(buttons.new, "New puzzle", "new", true)
-	if buttons.has("go_practice"):
-		_button(buttons.go_practice, "Play practice", "go_practice", true)
+		_button(buttons.new, "New game", "new", true)
 	if buttons.has("view"):
 		_button(buttons.view, "View board", "view")
 
@@ -741,7 +709,7 @@ func _button(rect: Rect2, label: String, id: String, primary := false) -> void:
 
 func _tab(rect: Rect2, label: String, active: bool, id: String) -> void:
 	if active:
-		_box(rect, Color("01754f") if id.begins_with("size_") else INK, Color(0, 0, 0, 0), 20)
+		_box(rect, Color("01754f") if id.begins_with("level_") else INK, Color(0, 0, 0, 0), 20)
 		_text(rect.get_center() + Vector2(0, 6), label, 16, Color.WHITE, bold, true)
 	else:
 		_box(rect, Color("ebebeb") if hover_button == id else CARD, Color(0, 0, 0, 0.35), 20)
@@ -768,21 +736,12 @@ func _load() -> void:
 	if config.has_section("best"):
 		for key in config.get_section_keys("best"):
 			best[key] = int(config.get_value("best", key))
-	if config.has_section("daily"):
-		for key in config.get_section_keys("daily"):
-			daily_done[key] = int(config.get_value("daily", key))
-	practice_size = int(config.get_value("settings", "practice_size", 6))
-	if not SIZES.has(practice_size):
-		practice_size = 6
-	mode = str(config.get_value("settings", "mode", "daily"))
+	level = clampi(int(config.get_value("settings", "level", 1)), 0, LEVELS.size() - 1)
 
 
 func _save() -> void:
 	var config := ConfigFile.new()
 	for key in best:
 		config.set_value("best", key, best[key])
-	for key in daily_done:
-		config.set_value("daily", key, daily_done[key])
-	config.set_value("settings", "practice_size", practice_size)
-	config.set_value("settings", "mode", mode)
+	config.set_value("settings", "level", level)
 	config.save(SAVE_PATH)
