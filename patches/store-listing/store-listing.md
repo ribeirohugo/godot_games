@@ -6,7 +6,7 @@ The game supports `en`, `pt`, `es`, `fr` and `de` (see `scripts/strings.gd`), so
 
 ## Screenshots
 
-Partner Center requires at least one real screenshot per listing. There's no `store-listing-art/screenshots/` folder yet — run `play.bat`, capture a few 1366×768+ windowed shots (a mid-solve board, the win card, the stats panel are good candidates), and drop them in a new `store-listing-art/screenshots/` folder before submitting.
+`store-listing/screenshot.png` has one real in-game shot (an Easy board at the start). Partner Center accepts that as the minimum, but a few more — a mid-solve board, the win card, the stats panel — would round out the listing. Add extra ones as `store-listing/screenshot-2.png`, etc.
 
 ## English — Patches
 
@@ -26,9 +26,7 @@ Pick Easy, Medium or Hard instead of waiting for a daily puzzle — no daily lim
 
 Track your progress in Statistics: puzzles played and solved, current and best streaks, and best times and hint-free solves for every difficulty. Play with the mouse, the keyboard, or an Xbox controller, in English, Portuguese, Spanish, French or German.
 
-Free, ad-free, no in-app purchases.
-
-(968 characters)
+(931 characters)
 
 ### Product features (200 characters per feature, 20 max — Store adds bullets automatically, do not add your own)
 
@@ -36,7 +34,6 @@ Free, ad-free, no in-app purchases.
 2. Drag to draw a patch, drag over one to replace it, or tap a patch to remove it
 3. Three difficulty levels, freshly generated each time — no daily puzzle, play whenever you like
 4. Undo, clear the board, and hints that point to your next patch or flag a mistake
-5. Free, ad-free, no in-app purchases
 
 ## Portuguese (pt) — Patches
 
@@ -56,9 +53,7 @@ Escolhe Fácil, Médio ou Difícil em vez de esperares por um puzzle diário —
 
 Acompanha o teu progresso em Estatísticas: puzzles jogados e resolvidos, sequência atual e melhor sequência, e melhores tempos e resoluções sem dicas para cada dificuldade. Joga com o rato, o teclado, ou um comando Xbox, em inglês, português, espanhol, francês ou alemão.
 
-Grátis, sem anúncios, sem compras dentro da aplicação.
-
-(1056 carateres)
+(1000 carateres)
 
 ### Funcionalidades do produto (200 carateres por funcionalidade, 20 no máximo — a Store adiciona os marcadores automaticamente, não acrescentes os teus)
 
@@ -66,7 +61,6 @@ Grátis, sem anúncios, sem compras dentro da aplicação.
 2. Arrasta para desenhar uma peça, arrasta sobre uma para a substituir, ou toca para a remover
 3. Três níveis de dificuldade, gerados na hora — sem puzzle diário, joga quando quiseres
 4. Desfazer, limpar o tabuleiro, e dicas que apontam a próxima peça ou um erro
-5. Grátis, sem anúncios, sem compras dentro da aplicação
 
 ## Spanish (es) — Patches
 
@@ -86,9 +80,7 @@ Elige Fácil, Medio o Difícil en lugar de esperar un puzle diario — sin lími
 
 Sigue tu progreso en Estadísticas: puzles jugados y resueltos, racha actual y mejor racha, y mejores tiempos y resoluciones sin pistas para cada dificultad. Juega con el ratón, el teclado, o un mando de Xbox, en inglés, portugués, español, francés o alemán.
 
-Gratis, sin anuncios, sin compras dentro de la aplicación.
-
-(1058 caracteres)
+(998 caracteres)
 
 ### Características del producto (200 caracteres por característica, 20 como máximo — la Store añade las viñetas automáticamente, no incluyas las tuyas)
 
@@ -96,7 +88,6 @@ Gratis, sin anuncios, sin compras dentro de la aplicación.
 2. Arrastra para dibujar una pieza, arrastra sobre una para sustituirla, o tócala para eliminarla
 3. Tres niveles de dificultad, generados al momento — sin puzle diario, juega cuando quieras
 4. Deshacer, borrar el tablero, y pistas que señalan tu siguiente pieza o un error
-5. Gratis, sin anuncios, sin compras dentro de la aplicación
 
 ## French (fr) — Patches
 
@@ -116,9 +107,7 @@ Choisissez Facile, Moyen ou Difficile au lieu d'attendre un puzzle quotidien —
 
 Suivez votre progression dans Statistiques : puzzles joués et résolus, série actuelle et meilleure série, ainsi que meilleurs temps et résolutions sans indice pour chaque difficulté. Jouez à la souris, au clavier, ou avec une manette Xbox, en anglais, portugais, espagnol, français ou allemand.
 
-Gratuit, sans publicité, sans achat intégré.
-
-(1117 caractères)
+(1071 caractères)
 
 ### Fonctionnalités du produit (200 caractères par fonctionnalité, 20 maximum — la Store ajoute les puces automatiquement, n'ajoutez pas les vôtres)
 
@@ -126,7 +115,6 @@ Gratuit, sans publicité, sans achat intégré.
 2. Glissez pour dessiner une pièce, glissez sur une pièce pour la remplacer, ou touchez-la pour la supprimer
 3. Trois niveaux de difficulté, générés à la volée — sans puzzle quotidien, jouez quand vous voulez
 4. Annuler, effacer la grille, et des indices qui montrent la prochaine pièce ou une erreur
-5. Gratuit, sans publicité, sans achat intégré
 
 ## German (de) — Patches
 
@@ -146,9 +134,7 @@ Wähle Leicht, Mittel oder Schwer, statt auf ein tägliches Rätsel zu warten �
 
 Verfolge deinen Fortschritt in der Statistik: gespielte und gelöste Rätsel, aktuelle und beste Serie, sowie Bestzeiten und tippfreie Lösungen für jede Schwierigkeit. Spiele mit Maus, Tastatur oder einem Xbox-Controller, auf Englisch, Portugiesisch, Spanisch, Französisch oder Deutsch.
 
-Kostenlos, werbefrei, keine In-App-Käufe.
-
-(1119 Zeichen)
+(1076 Zeichen)
 
 ### Produktfunktionen (200 Zeichen pro Funktion, maximal 20 — die Store fügt die Aufzählungszeichen automatisch hinzu, füge deine eigenen nicht hinzu)
 
@@ -156,4 +142,3 @@ Kostenlos, werbefrei, keine In-App-Käufe.
 2. Ziehen zeichnet eine Fläche, Ziehen über eine Fläche ersetzt sie, Antippen entfernt sie
 3. Drei Schwierigkeitsstufen, jedes Mal frisch erzeugt — kein Tagesrätsel, spiel wann du willst
 4. Rückgängig machen, Spielfeld leeren, und Tipps, die die nächste Fläche oder einen Fehler zeigen
-5. Kostenlos, werbefrei, keine In-App-Käufe

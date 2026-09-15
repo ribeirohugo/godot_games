@@ -6,7 +6,7 @@ The game supports `en`, `pt`, `es`, `fr` and `de` (see `scripts/strings.gd`), so
 
 ## Screenshots
 
-Partner Center requires at least one real screenshot per listing. `store-listing-art/` has the app tile, box art and poster art (generated from `icon.png`), but no `screenshots/` folder yet — this machine's Godot install is the Mono/.NET build, which can't export to Web, and there's no way to capture the real running game from here. Run `play.bat`, capture a few 1366×768+ windowed shots (board mid-solve, the win card, the stats panel are good candidates), and drop them in a new `store-listing-art/screenshots/` folder before submitting.
+`store-listing/screenshot.png` has one real in-game shot (a mid-solve Hard board). Partner Center accepts that as the minimum, but a few more — the win card, the stats panel — would round out the listing. Add extra ones as `store-listing/screenshot-2.png`, etc.
 
 ## English — Zip Path
 
@@ -26,9 +26,7 @@ Stuck? Undo your last move, clear the board, or ask for a hint — it points to 
 
 Track your progress in Statistics: puzzles played and solved, current and best streaks, and best times and hint-free solves for every difficulty. Play with the mouse, the keyboard, or an Xbox controller, in English, Portuguese, Spanish, French or German.
 
-Free, ad-free, no in-app purchases.
-
-(988 characters)
+(951 characters)
 
 ### Product features (200 characters per feature, 20 max — Store adds bullets automatically, do not add your own)
 
@@ -36,7 +34,6 @@ Free, ad-free, no in-app purchases.
 2. Some boards add walls between cells that the line can't cross, for an extra layer of challenge
 3. Three difficulty levels, freshly generated each time — no daily puzzle, play whenever you like
 4. Undo, clear the board, and hints that point to your next move or flag where you went wrong
-5. Free, ad-free, no in-app purchases
 
 ## Portuguese (pt) — Zip Path
 
@@ -56,9 +53,7 @@ Ficaste preso? Desfaz a última jogada, limpa o tabuleiro, ou pede uma dica — 
 
 Acompanha o teu progresso em Estatísticas: puzzles jogados e resolvidos, sequência atual e melhor sequência, e melhores tempos e resoluções sem dicas para cada dificuldade. Joga com o rato, o teclado, ou um comando Xbox, em inglês, português, espanhol, francês ou alemão.
 
-Grátis, sem anúncios, sem compras dentro da aplicação.
-
-(1088 carateres)
+(1032 carateres)
 
 ### Funcionalidades do produto (200 carateres por funcionalidade, 20 no máximo — a Store adiciona os marcadores automaticamente, não acrescentes os teus)
 
@@ -66,7 +61,6 @@ Grátis, sem anúncios, sem compras dentro da aplicação.
 2. Alguns tabuleiros têm paredes entre casas que a linha não pode atravessar, para um desafio extra
 3. Três níveis de dificuldade, gerados na hora — sem puzzle diário, joga quando quiseres
 4. Desfazer, limpar o tabuleiro, e dicas que apontam a próxima jogada ou onde te enganaste
-5. Grátis, sem anúncios, sem compras dentro da aplicação
 
 ## Spanish (es) — Zip Path
 
@@ -86,9 +80,7 @@ Elige una dificultad en lugar de esperar un puzle diario. Fácil, Medio y Difíc
 
 Sigue tu progreso en Estadísticas: puzles jugados y resueltos, racha actual y mejor racha, y mejores tiempos y resoluciones sin pistas para cada dificultad. Juega con el ratón, el teclado, o un mando de Xbox, en inglés, portugués, español, francés o alemán.
 
-Gratis, sin anuncios, sin compras dentro de la aplicación.
-
-(1068 caracteres)
+(1008 caracteres)
 
 ### Características del producto (200 caracteres por característica, 20 como máximo — la Store añade las viñetas automáticamente, no incluyas las tuyas)
 
@@ -96,7 +88,6 @@ Gratis, sin anuncios, sin compras dentro de la aplicación.
 2. Algunos tableros añaden paredes entre casillas que la línea no puede cruzar, para un reto extra
 3. Tres niveles de dificultad, generados al momento — sin puzle diario, juega cuando quieras
 4. Deshacer, borrar el tablero, y pistas que señalan tu siguiente jugada o dónde te equivocaste
-5. Gratis, sin anuncios, sin compras dentro de la aplicación
 
 ## French (fr) — Zip Path
 
@@ -116,9 +107,7 @@ Bloqué ? Annulez votre dernier coup, effacez la grille, ou demandez un indice �
 
 Suivez votre progression dans Statistiques : puzzles joués et résolus, série actuelle et meilleure série, ainsi que meilleurs temps et résolutions sans indice pour chaque difficulté. Jouez à la souris, au clavier, ou avec une manette Xbox, en anglais, portugais, espagnol, français ou allemand.
 
-Gratuit, sans publicité, sans achat intégré.
-
-(1170 caractères)
+(1124 caractères)
 
 ### Fonctionnalités du produit (200 caractères par fonctionnalité, 20 maximum — la Store ajoute les puces automatiquement, n'ajoutez pas les vôtres)
 
@@ -126,7 +115,6 @@ Gratuit, sans publicité, sans achat intégré.
 2. Certaines grilles ajoutent des murs entre les cases que la ligne ne peut pas traverser, pour plus de défi
 3. Trois niveaux de difficulté, générés à la volée — sans puzzle quotidien, jouez quand vous voulez
 4. Annuler, effacer la grille, et des indices qui montrent le prochain coup ou l'erreur commise
-5. Gratuit, sans publicité, sans achat intégré
 
 ## German (de) — Zip Path
 
@@ -146,9 +134,7 @@ Festgefahren? Mach deinen letzten Zug rückgängig, leere das Spielfeld, oder ho
 
 Verfolge deinen Fortschritt in der Statistik: gespielte und gelöste Rätsel, aktuelle und beste Serie, sowie Bestzeiten und tippfreie Lösungen für jede Schwierigkeit. Spiele mit Maus, Tastatur oder einem Xbox-Controller, auf Englisch, Portugiesisch, Spanisch, Französisch oder Deutsch.
 
-Kostenlos, werbefrei, keine In-App-Käufe.
-
-(1135 Zeichen)
+(1092 Zeichen)
 
 ### Produktfunktionen (200 Zeichen pro Funktion, maximal 20 — die Store fügt die Aufzählungszeichen automatisch hinzu, füge deine eigenen nicht hinzu)
 
@@ -156,4 +142,3 @@ Kostenlos, werbefrei, keine In-App-Käufe.
 2. Manche Spielfelder haben Wände zwischen Feldern, die die Linie nicht überqueren darf, für mehr Herausforderung
 3. Drei Schwierigkeitsstufen, jedes Mal frisch erzeugt — kein Tagesrätsel, spiel wann du willst
 4. Rückgängig machen, Spielfeld leeren, und Tipps, die den nächsten Zug oder den Fehler zeigen
-5. Kostenlos, werbefrei, keine In-App-Käufe
