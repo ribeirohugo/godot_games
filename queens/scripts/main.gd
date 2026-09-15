@@ -1,25 +1,29 @@
 extends Node2D
 ## Queens: place one queen in every row, column and colored region. Queens can't touch,
 ## not even diagonally. Tap a cell once for ×, twice for a queen; drag to mark many ×.
-## Right click places or removes a queen. Keys: arrows move, Space cycles, Q queen, X mark,
-## Backspace clears, Z undoes, H gives a hint. Xbox gamepads work too (see _pad_input).
+## Right click places or removes a queen. Keys: arrows move (and reach the buttons), Enter / Space
+## press, Q queen, X mark, Backspace clears, Z undoes, H hints, Esc goes back.
+## Xbox gamepads work too (see _pad_input). Statistics and settings open from the header.
 
 const GeneratorScript := preload("res://scripts/generator.gd")
 const SfxScript := preload("res://scripts/sfx.gd")
+const StringsScript := preload("res://scripts/strings.gd")
 
 const SCREEN := Vector2(700, 940)
 const BOARD := Rect2(40, 196, 620, 620)
-## Difficulty levels: bigger boards have more regions to reason about.
+const PANEL := Rect2(32, 188, 636, 636)  # statistics and settings cover the board
+## Difficulty levels: bigger boards have more regions to reason about. `name` keys the saved data.
 const LEVELS := [
-	{"name": "Easy", "size": 7},
-	{"name": "Medium", "size": 8},
-	{"name": "Hard", "size": 9},
+	{"name": "Easy", "key": "level_easy", "size": 7},
+	{"name": "Medium", "key": "level_medium", "size": 8},
+	{"name": "Hard", "key": "level_hard", "size": 9},
 ]
 const SAVE_PATH := "user://queens.cfg"
 const STICK_PRESS := 0.5  # left stick counts as a direction past this
 const STICK_RELEASE := 0.3  # and lets go under this
 const PAD_REPEAT_DELAY := 0.32  # holding a direction: wait this long, then
 const PAD_REPEAT := 0.09  # move again this often
+const SETTING_ROWS := ["set_sound", "set_mistakes", "set_auto", "set_vibration"]
 
 enum Mark { EMPTY, CROSS, QUEEN }
 
@@ -37,6 +41,12 @@ const REGION_COLORS := ["bba3e2", "ffc992", "96beff", "b3dfa0", "dfdfdf", "ff7b6
 
 var level := 1
 var size := 8
+
+# Settings.
+var language := ""
+var sound_on := true
+var vibration_on := true
+var show_mistakes := true
 var auto_cross := true
 
 var regions := PackedInt32Array()
@@ -52,17 +62,23 @@ var win_clock := 0.0
 var card_hidden := false
 var hints_used := 0
 var hint_cell := -1
-var hint_text := ""
+var hint_key := ""
 var hint_time := 0.0
 var new_best := false
 var best := {}  # level name -> seconds
+
+# Statistics. A puzzle counts as played once the first move is made; leaving it unsolved ends the streak.
+var stats := {}
+var puzzle_started := false
+var panel := ""  # "stats", "settings" or ""
+var reset_armed := false
 
 var conflict_cells := {}
 var bad_queens := {}
 
 var hover_cell := -1
 var hover_button := ""
-var cursor := -1  # keyboard cursor, shown once the keyboard is used
+var cursor := -1  # keyboard / gamepad cursor on the board
 var stroke_cell := -1
 var stroke_prev := Mark.EMPTY
 var stroke_mode := ""  # "" while it's still a tap, "mark" or "erase" once dragging
@@ -93,7 +109,12 @@ func _ready() -> void:
 	bold = _font(700)
 	sfx = SfxScript.new()
 	add_child(sfx)
+	StringsScript.install()
+	stats = _empty_stats()
 	_load()
+	if language == "":
+		language = StringsScript.system_language()
+	_apply_settings()
 	_new_game()
 
 
@@ -116,16 +137,27 @@ func _font(weight: int) -> Font:
 	return system
 
 
+func _apply_settings() -> void:
+	TranslationServer.set_locale(language)
+	AudioServer.set_bus_mute(0, not sound_on)
+
+
 # --- Puzzles -------------------------------------------------------------------------------
 
 ## A fresh random puzzle at the current difficulty level.
 func _new_game() -> void:
+	if puzzle_started and not won:
+		stats.streak = 0  # gave up on a started puzzle
 	_start_puzzle(LEVELS[level].size, randi())
 	_save()
 
 
 func _level_name() -> String:
 	return LEVELS[level].name
+
+
+func _level_label(index := -1) -> String:
+	return tr(LEVELS[level if index < 0 else index].key)
 
 
 func _start_puzzle(new_size: int, seed_value: int) -> void:
@@ -157,7 +189,15 @@ func _start_puzzle(new_size: int, seed_value: int) -> void:
 	confetti.clear()
 	cursor = -1
 	stroke_cell = -1
+	puzzle_started = false
 	_update_conflicts()
+
+
+func _empty_stats() -> Dictionary:
+	var levels := {}
+	for entry in LEVELS:
+		levels[entry.name] = {"solved": 0, "total_time": 0, "no_hints": 0}
+	return {"played": 0, "solved": 0, "streak": 0, "best_streak": 0, "levels": levels}
 
 
 # --- Rules -----------------------------------------------------------------------------------
@@ -238,12 +278,16 @@ func _set_mark(cell: int, value: int) -> void:
 func _commit(sound: String) -> void:
 	if stroke_changes.is_empty():
 		return
+	if not puzzle_started:
+		puzzle_started = true
+		stats.played += 1
+		_save()
 	var had_conflicts := not bad_queens.is_empty()
 	undo_stack.append(stroke_changes)
 	stroke_changes = []
 	hint_time = 0.0
 	_update_conflicts()
-	if not had_conflicts and not bad_queens.is_empty():
+	if show_mistakes and not had_conflicts and not bad_queens.is_empty():
 		sfx.play("conflict")
 		_rumble(0.3, 0.5, 0.18)
 	else:
@@ -255,7 +299,7 @@ func _commit(sound: String) -> void:
 
 
 func _undo() -> void:
-	if undo_stack.is_empty() or won:
+	if undo_stack.is_empty() or won or panel != "":
 		return
 	var changes: Array = undo_stack.pop_back()
 	for i in range(changes.size() - 1, -1, -1):
@@ -273,7 +317,7 @@ func _clear() -> void:
 
 
 func _hint() -> void:
-	if won:
+	if won or panel != "":
 		return
 	hints_used += 1
 	hint_time = 4.0
@@ -281,13 +325,13 @@ func _hint() -> void:
 	for cell in size * size:
 		if marks[cell] == Mark.QUEEN and solution[cell / size] != cell % size:
 			hint_cell = cell
-			hint_text = "This queen isn't in the right spot."
+			hint_key = "q_hint_wrong"
 			return
 	for row in size:
 		var cell := row * size + solution[row]
 		if marks[cell] == Mark.CROSS:
 			hint_cell = cell
-			hint_text = "This cell was marked ×, but a queen goes here."
+			hint_key = "q_hint_cross"
 			return
 	# Point at the queen of the smallest region still missing one.
 	var best_cell := -1
@@ -304,7 +348,7 @@ func _hint() -> void:
 			best_count = count
 			best_cell = cell
 	hint_cell = best_cell
-	hint_text = "Look here: this is where a queen belongs."
+	hint_key = "q_hint_look"
 
 
 func _win() -> void:
@@ -316,6 +360,14 @@ func _win() -> void:
 	if hints_used == 0 and (not best.has(key) or seconds < int(best[key])):
 		new_best = best.has(key)
 		best[key] = seconds
+	stats.solved += 1
+	stats.streak += 1
+	stats.best_streak = maxi(int(stats.best_streak), int(stats.streak))
+	var level_stats: Dictionary = stats.levels[key]
+	level_stats.solved += 1
+	level_stats.total_time += seconds
+	if hints_used == 0:
+		level_stats.no_hints += 1
 	_save()
 	sfx.play("win")
 	_rumble(0.5, 0.7, 0.45)
@@ -331,7 +383,7 @@ func _win() -> void:
 
 func _process(delta: float) -> void:
 	clock += delta
-	if not won and focused:
+	if not won and focused and panel == "":
 		elapsed += delta
 	if won:
 		win_clock += delta
@@ -368,7 +420,7 @@ func _unhandled_input(event: InputEvent) -> void:
 		focus = ""
 	if event is InputEventMouseMotion:
 		hover_button = _button_at(event.position)
-		var cell := _cell_at(event.position)
+		var cell := _cell_at(event.position) if panel == "" else -1
 		hover_cell = cell
 		if stroke_cell >= 0 and cell >= 0 and cell != stroke_cell and stroke_mode == "" and not won:
 			# The press became a drag: mark (or erase) × on every cell passed over.
@@ -381,6 +433,10 @@ func _unhandled_input(event: InputEvent) -> void:
 			var id := _button_at(event.position)
 			if id != "":
 				_press(id)
+				return
+			if panel != "":
+				if not PANEL.has_point(event.position):
+					_press("close")
 				return
 			var cell := _cell_at(event.position)
 			if cell >= 0 and not won:
@@ -398,15 +454,15 @@ func _unhandled_input(event: InputEvent) -> void:
 			stroke_mode = ""
 	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_RIGHT:
 		var cell := _cell_at(event.position)
-		if cell >= 0 and not won:
+		if cell >= 0 and not won and panel == "":
 			_set_mark(cell, Mark.EMPTY if marks[cell] == Mark.QUEEN else Mark.QUEEN)
 			_commit("queen" if marks[cell] == Mark.QUEEN else "remove")
 	elif event is InputEventKey and event.pressed:
 		_key(event)
 
 
-## Xbox-style gamepad: D-pad / left stick move, A cycles, X ×, Y queen, B clears, LB undo,
-## RB hint, LT / RT change level, Start new game, View toggles auto ×.
+## Xbox-style gamepad: D-pad / left stick move, A cycles or presses, X ×, Y queen, B clears or
+## goes back, LB undo, RB hint, LT / RT change level, Start new game, View toggles auto ×.
 func _pad_input(event: InputEvent) -> void:
 	if event is InputEventJoypadMotion:
 		match event.axis:
@@ -426,7 +482,7 @@ func _pad_input(event: InputEvent) -> void:
 			JOY_AXIS_TRIGGER_LEFT, JOY_AXIS_TRIGGER_RIGHT:
 				var index := 0 if event.axis == JOY_AXIS_TRIGGER_LEFT else 1
 				var down: bool = event.axis_value > 0.6
-				if down and not triggers[index]:
+				if down and not triggers[index] and panel == "":
 					_use_pad(event)
 					var next := clampi(level + (-1 if index == 0 else 1), 0, LEVELS.size() - 1)
 					if next != level:
@@ -451,6 +507,15 @@ func _pad_input(event: InputEvent) -> void:
 		return
 	var had_cursor := cursor >= 0 or focus != ""
 	_use_pad(event)
+	if panel != "":
+		match button.button_index:
+			JOY_BUTTON_A:
+				if focus != "":
+					_press(focus)
+					_fix_focus()
+			JOY_BUTTON_B, JOY_BUTTON_START:
+				_press("close")
+		return
 	# Shortcuts that work wherever the focus is.
 	match button.button_index:
 		JOY_BUTTON_START:
@@ -517,7 +582,7 @@ func _start_nav() -> void:
 	nav_active = true
 	stroke_cell = -1
 	_fix_focus()
-	if cursor < 0 and focus == "" and not won:
+	if cursor < 0 and focus == "" and not won and panel == "":
 		cursor = (size / 2) * size + size / 2
 
 
@@ -529,15 +594,26 @@ func _pad_hold(dir: Vector2i) -> void:
 	var had_focus := cursor >= 0 or focus != ""
 	using_pad = true
 	_start_nav()
-	if had_focus or won:
+	if had_focus or won or panel != "":
 		_pad_move(dir)
 	else:
 		sfx.play("click")
 	repeat_timer = PAD_REPEAT_DELAY
 
 
-## Rows the gamepad moves through, top to bottom: arrays of button ids, and "board".
+## Rows the gamepad and keyboard move through, top to bottom: arrays of button ids, and "board".
 func _nav_rows() -> Array:
+	var icons := ["stats", "settings"]
+	if panel == "stats":
+		return [icons, ["close"], ["reset"]]
+	if panel == "settings":
+		var langs := []
+		for entry in StringsScript.LANGUAGES:
+			langs.append("lang_" + entry[0])
+		var rows := [icons, ["close"], langs]
+		for id in SETTING_ROWS:
+			rows.append([id])
+		return rows
 	if won and not card_hidden:
 		return [["new", "view"]] if win_clock > 0.9 else []
 	var list := _buttons()
@@ -549,7 +625,7 @@ func _nav_rows() -> Array:
 	for id in ["undo", "clear", "hint", "auto", "results"]:
 		if list.has(id):
 			bottom.append(id)
-	return [header, bottom] if won else [header, "board", bottom]
+	return [icons, header, bottom] if won else [icons, header, "board", bottom]
 
 
 ## Keeps the focus on something that exists (buttons come and go as the game changes).
@@ -561,7 +637,10 @@ func _fix_focus() -> void:
 	for row in rows:
 		if row is Array:
 			ids.append_array(row)
-	if focus == "" and not rows.has("board"):
+	if panel != "":
+		if not ids.has(focus):
+			focus = "close"
+	elif focus == "" and not rows.has("board"):
 		focus = ids[0] if won and not card_hidden else ids.back()
 	elif focus != "" and not ids.has(focus):
 		focus = "" if rows.has("board") else (ids[0] if won and not card_hidden else ids.back())
@@ -626,7 +705,7 @@ func _moved_on_board() -> void:
 
 
 func _rumble(weak: float, strong: float, duration: float) -> void:
-	if using_pad:
+	if using_pad and vibration_on:
 		Input.start_joy_vibration(pad_device, weak, strong, duration)
 
 
@@ -646,6 +725,24 @@ func _cycle(cell: int) -> void:
 
 func _key(event: InputEventKey) -> void:
 	var code := event.physical_keycode
+	if panel != "":
+		# Panels: arrows move between their buttons, Enter / Space press, Esc closes.
+		var panel_moves := {KEY_UP: Vector2i(0, -1), KEY_DOWN: Vector2i(0, 1), KEY_LEFT: Vector2i(-1, 0), KEY_RIGHT: Vector2i(1, 0)}
+		if panel_moves.has(code):
+			var had_focus := nav_active and focus != ""
+			_start_nav()
+			if had_focus:
+				_pad_move(panel_moves[code])
+			else:
+				sfx.play("click")  # the first press just shows the focus ring
+		elif code in [KEY_SPACE, KEY_ENTER, KEY_KP_ENTER]:
+			_start_nav()
+			if focus != "":
+				_press(focus)
+				_fix_focus()
+		elif code == KEY_ESCAPE:
+			_press("close")
+		return
 	if code == KEY_Z:  # with or without Ctrl
 		_undo()
 		return
@@ -706,16 +803,53 @@ func _press(id: String) -> void:
 		level = int(id.substr(6))
 		_new_game()
 		return
+	if id.begins_with("lang_"):
+		language = id.substr(5)
+		_apply_settings()
+		_save()
+		return
 	match id:
+		"stats", "settings":
+			panel = "" if panel == id else id
+			reset_armed = false
+			hint_time = 0.0
+			if nav_active:
+				focus = "close" if panel != "" else id
+		"close":
+			if nav_active:
+				focus = panel
+			panel = ""
+			reset_armed = false
+		"reset":
+			if reset_armed:
+				stats = _empty_stats()
+				best.clear()
+				reset_armed = false
+				_save()
+			else:
+				reset_armed = true
+		"set_sound":
+			sound_on = not sound_on
+			_apply_settings()
+			_save()
+			sfx.play("click")
+		"set_mistakes":
+			show_mistakes = not show_mistakes
+			_save()
+		"set_auto", "auto":
+			auto_cross = not auto_cross
+			_save()
+		"set_vibration":
+			vibration_on = not vibration_on
+			_save()
+			if vibration_on:
+				_rumble(0.3, 0.3, 0.15)
 		"undo":
 			_undo()
 		"clear":
 			_clear()
 		"hint":
 			_hint()
-		"auto":
-			auto_cross = not auto_cross
-			_save()
 		"new":
 			_new_game()
 		"view":
@@ -742,17 +876,33 @@ func _cell_at(pos: Vector2) -> int:
 
 func _buttons() -> Dictionary:
 	var list := {}
+	list["stats"] = Rect2(SCREEN.x - 272, 50, 46, 46)
+	list["settings"] = Rect2(SCREEN.x - 218, 50, 46, 46)
+	if panel != "":
+		list["close"] = Rect2(PANEL.end.x - 64, PANEL.position.y + 20, 44, 44)
+		if panel == "stats":
+			list["reset"] = Rect2(PANEL.get_center().x - 150, PANEL.end.y - 76, 300, 48)
+		else:
+			var x := PANEL.position.x + 28
+			for entry in StringsScript.LANGUAGES:
+				var width: float = bold.get_string_size(entry[1], HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 28.0
+				list["lang_" + entry[0]] = Rect2(x, PANEL.position.y + 124, width, 42)
+				x += width + 8.0
+			for i in SETTING_ROWS.size():
+				list[SETTING_ROWS[i]] = Rect2(PANEL.position.x + 20, PANEL.position.y + 206 + i * 84, PANEL.size.x - 40, 72)
+		return list
 	# Difficulty chips on the left, New game on the right.
 	var x := 40.0
 	for i in LEVELS.size():
-		var width: float = bold.get_string_size(LEVELS[i].name, HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 28.0
+		var width: float = bold.get_string_size(_level_label(i), HORIZONTAL_ALIGNMENT_LEFT, -1, 16).x + 28.0
 		list["level_%d" % i] = Rect2(x, 132, width, 40)
 		x += width + 6.0
-	list["new"] = Rect2(SCREEN.x - 40 - 124, 132, 124, 40)
+	var new_width: float = maxf(124.0, bold.get_string_size(tr("new_game"), HORIZONTAL_ALIGNMENT_LEFT, -1, 17).x + 36.0)
+	list["new"] = Rect2(SCREEN.x - 40 - new_width, 132, new_width, 40)
 	if won and not card_hidden and win_clock > 0.9:
 		var card := _card_rect()
-		list["new"] = Rect2(card.position.x + 32, card.end.y - 72, 180, 48)
-		list["view"] = Rect2(card.end.x - 212, card.end.y - 72, 180, 48)
+		list["new"] = Rect2(card.position.x + 32, card.end.y - 72, 190, 48)
+		list["view"] = Rect2(card.end.x - 222, card.end.y - 72, 190, 48)
 		return list
 	var y := BOARD.end.y + 26
 	list["undo"] = Rect2(40, y, 140, 48)
@@ -787,9 +937,9 @@ func _draw() -> void:
 	# Header.
 	_crown(Vector2(62, 76), 38.0, INK)
 	_text(Vector2(92, 92), "Queens", 38, INK, bold)
-	var sub := "%s · %d×%d" % [_level_name(), size, size]
+	var sub := "%s · %d×%d" % [_level_label(), size, size]
 	if best.has(_level_name()):
-		sub += "  ·  best %s" % _time(int(best[_level_name()]))
+		sub += "  ·  " + tr("best_short") % _time(int(best[_level_name()]))
 	_text(Vector2(40, 118), sub, 16, MUTED, font)
 	var timer_rect := Rect2(SCREEN.x - 160, 50, 120, 46)
 	_box(timer_rect, CARD, Color(0, 0, 0, 0.15), 23)
@@ -797,44 +947,58 @@ func _draw() -> void:
 	_text(timer_rect.position + Vector2(44, 31), _time(int(elapsed)), 20, GREEN if won else INK, bold)
 
 	var buttons := _buttons()
+	_icon_button(buttons.stats, "stats")
+	_icon_button(buttons.settings, "settings")
+	var play_buttons := buttons if panel == "" else _play_buttons()
 	for i in LEVELS.size():
-		_tab(buttons["level_%d" % i], LEVELS[i].name, i == level)
+		_tab(play_buttons["level_%d" % i], _level_label(i), i == level, "level_%d" % i)
 	if not (won and not card_hidden and win_clock > 0.9):
-		_button(buttons.new, "New game", "new", true)
+		_button(play_buttons.new, tr("new_game"), "new", true)
 
 	_draw_board()
 
 	# Bottom controls.
+	var y := BOARD.end.y + 26
 	if won and card_hidden:
-		_button(buttons.results, "Solved in %s  ·  See results" % _time(int(elapsed)), "results", true)
+		_button(play_buttons.results, tr("solved_results") % _time(int(elapsed)), "results", true)
 	elif not won or card_hidden or win_clock <= 0.9:
-		_button(buttons.get("undo", Rect2(40, BOARD.end.y + 26, 140, 48)), "Undo", "undo")
-		_button(buttons.get("clear", Rect2(190, BOARD.end.y + 26, 140, 48)), "Clear", "clear")
-		_button(buttons.get("hint", Rect2(340, BOARD.end.y + 26, 140, 48)), "Hint", "hint")
-	var auto_rect: Rect2 = buttons.get("auto", Rect2(490, BOARD.end.y + 26, 170, 48))
-	_toggle(auto_rect, "Auto ×", auto_cross)
+		_button(Rect2(40, y, 140, 48), tr("undo"), "undo")
+		_button(Rect2(190, y, 140, 48), tr("clear"), "clear")
+		_button(Rect2(340, y, 140, 48), tr("hint"), "hint")
+	_toggle(Rect2(490, y, 170, 48), tr("auto_cross"), auto_cross)
 
 	if hint_time > 0.0 and hint_cell >= 0:
-		_text(Vector2(SCREEN.x / 2, BOARD.position.y - 10), hint_text, 16, BLUE, bold, true)
+		_text(Vector2(SCREEN.x / 2, BOARD.position.y - 10), tr(hint_key), 16, BLUE, bold, true, 620)
 	else:
-		var help := "One queen in each row, column and color. Queens can't touch, not even diagonally."
-		if using_pad:
-			help = "A cycle  ·  X ×  ·  Y queen  ·  B clear  ·  LB undo  ·  RB hint  ·  LT/RT level  ·  Start new"
-		_text(Vector2(SCREEN.x / 2, SCREEN.y - 26), help, 15, MUTED, font, true)
+		var help := tr("q_pad_help") if using_pad else tr("q_rules")
+		_text(Vector2(SCREEN.x / 2, SCREEN.y - 26), help, 15, MUTED, font, true, 640)
 
 	for c: Dictionary in confetti:
 		draw_set_transform(c.pos, c.spin, Vector2.ONE)
 		draw_rect(Rect2(Vector2(-c.size / 2, -c.size / 4), Vector2(c.size, c.size / 2)), Color(c.color, minf(1.0, c.life)))
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
-	if won and not card_hidden and win_clock > 0.9:
+	if won and not card_hidden and win_clock > 0.9 and panel == "":
 		_draw_result_card()
+	if panel == "stats":
+		_draw_stats()
+	elif panel == "settings":
+		_draw_settings()
 
 	# Focus ring on the button selected with the gamepad or keyboard.
 	if nav_active and focus != "":
-		var list := _buttons()
-		if list.has(focus):
-			_box(list[focus].grow(4), Color(0, 0, 0, 0), BLUE, 26, 3)
+		if buttons.has(focus):
+			var radius := 18 if SETTING_ROWS.has(focus) else 26
+			_box(buttons[focus].grow(4), Color(0, 0, 0, 0), BLUE, radius, 3)
+
+
+## The play screen's buttons, for drawing the header and footer under an open panel.
+func _play_buttons() -> Dictionary:
+	var open := panel
+	panel = ""
+	var list := _buttons()
+	panel = open
+	return list
 
 
 func _draw_board() -> void:
@@ -846,7 +1010,7 @@ func _draw_board() -> void:
 		if cell == hover_cell and not won:
 			color = color.darkened(0.06)
 		draw_rect(rect, color)
-		if conflict_cells.has(cell):
+		if show_mistakes and conflict_cells.has(cell):
 			_stripes(rect, Color(RED, 0.32))
 
 	# Thin grid, then thick lines where regions meet.
@@ -875,7 +1039,7 @@ func _draw_board() -> void:
 					var t := win_clock - (cell / size) * 0.07
 					if t > 0.0 and t < 0.35:
 						pop = 1.0 + 0.35 * sin(t / 0.35 * PI)
-				_crown(center, unit * 0.56 * pop, RED if bad_queens.has(cell) else INK)
+				_crown(center, unit * 0.56 * pop, RED if show_mistakes and bad_queens.has(cell) else INK)
 			Mark.CROSS:
 				_cross(center, unit * 0.13, Color(0, 0, 0, 0.62))
 			_:
@@ -887,7 +1051,7 @@ func _draw_board() -> void:
 		var rect := _cell_rect(hint_cell).grow(-2)
 		draw_rect(rect, Color(BLUE, 0.15 + 0.15 * pulse))
 		draw_rect(rect, BLUE, false, 4.0)
-	if cursor >= 0 and focus == "":
+	if cursor >= 0 and focus == "" and panel == "":
 		draw_rect(_cell_rect(cursor).grow(-3), BLUE, false, 3.0)
 
 
@@ -900,22 +1064,110 @@ func _draw_result_card() -> void:
 	_box(card, Color(1, 1, 1, appear), Color(0, 0, 0, 0.1 * appear), 18)
 	var cx := card.get_center().x
 	_crown(Vector2(cx, card.position.y + 52), 44.0, Color(GREEN, appear))
-	_text(Vector2(cx, card.position.y + 118), "You win!", 34, Color(INK, appear), bold, true)
-	_text(Vector2(cx, card.position.y + 148), "%s · %d×%d" % [_level_name(), size, size], 16, Color(MUTED, appear), font, true)
+	_text(Vector2(cx, card.position.y + 118), tr("you_win"), 34, Color(INK, appear), bold, true)
+	_text(Vector2(cx, card.position.y + 148), "%s · %d×%d" % [_level_label(), size, size], 16, Color(MUTED, appear), font, true)
 	_text(Vector2(cx, card.position.y + 206), _time(int(elapsed)), 44, Color(INK, appear), bold, true)
 	var detail := ""
-	if hints_used > 0:
-		detail = "%d hint%s used · not counted for best time" % [hints_used, "" if hints_used == 1 else "s"]
+	if hints_used == 1:
+		detail = tr("hint_used_one")
+	elif hints_used > 1:
+		detail = tr("hints_used") % hints_used
 	elif new_best:
-		detail = "New best time on %s!" % _level_name()
+		detail = tr("new_best") % _level_label()
 	elif best.has(_level_name()):
-		detail = "Best on %s: %s" % [_level_name(), _time(int(best[_level_name()]))]
-	_text(Vector2(cx, card.position.y + 238), detail, 15, Color(BLUE if new_best else MUTED, appear), font, true)
+		detail = tr("best_on") % [_level_label(), _time(int(best[_level_name()]))]
+	_text(Vector2(cx, card.position.y + 238), detail, 15, Color(BLUE if new_best else MUTED, appear), font, true, 440)
 	var buttons := _buttons()
 	if buttons.has("new"):
-		_button(buttons.new, "New game", "new", true)
+		_button(buttons.new, tr("new_game"), "new", true)
 	if buttons.has("view"):
-		_button(buttons.view, "View board", "view")
+		_button(buttons.view, tr("view_board"), "view")
+
+
+func _draw_panel_frame(title: String) -> void:
+	draw_rect(Rect2(Vector2(0, PANEL.position.y - 8), Vector2(SCREEN.x, SCREEN.y - PANEL.position.y + 8)), Color(BG, 0.7))
+	_box(Rect2(PANEL.position + Vector2(0, 6), PANEL.size), Color(0, 0, 0, 0.1), Color(0, 0, 0, 0), 18)
+	_box(PANEL, CARD, Color(0, 0, 0, 0.1), 18)
+	_text(PANEL.position + Vector2(28, 56), title, 28, INK, bold)
+	var close: Rect2 = _buttons().close
+	_box(close, Color("ebebeb") if hover_button == "close" else CARD, Color(0, 0, 0, 0.35), 22)
+	_cross(close.get_center(), 8.0, INK)
+
+
+func _draw_stats() -> void:
+	_draw_panel_frame(tr("statistics"))
+	var x := PANEL.position.x + 28
+	var width := PANEL.size.x - 56
+	var played := int(stats.played)
+	var solved := int(stats.solved)
+	var tiles := [
+		[str(played), tr("played")],
+		[str(solved), tr("solved")],
+		["%d%%" % (roundi(100.0 * solved / played) if played > 0 else 0), tr("win_rate")],
+		[str(stats.streak), tr("current_streak")],
+		[str(stats.best_streak), tr("best_streak")],
+	]
+	var tile_w := (width - 4 * 10.0) / 5.0
+	for i in tiles.size():
+		var tile := Rect2(x + i * (tile_w + 10.0), PANEL.position.y + 84, tile_w, 96)
+		_box(tile, BG, Color(0, 0, 0, 0), 12)
+		_text(Vector2(tile.get_center().x, tile.position.y + 50), tiles[i][0], 30, INK, bold, true)
+		_text(Vector2(tile.get_center().x, tile.position.y + 78), tiles[i][1], 13, MUTED, font, true, tile_w - 10)
+
+	# Per level table.
+	var columns := [x + 12, x + 230, x + 340, x + 450, x + 545]
+	var head_y := PANEL.position.y + 222
+	var heads := [tr("level"), tr("solved"), tr("best_time"), tr("average"), tr("no_hints")]
+	for i in heads.size():
+		if i == 0:
+			_text(Vector2(columns[i], head_y), heads[i], 13, MUTED, bold, false, 200)
+		else:
+			_text(Vector2(columns[i], head_y), heads[i], 13, MUTED, bold, true, 100)
+	for i in LEVELS.size():
+		var row := Rect2(x, head_y + 14 + i * 64, width, 56)
+		_box(row, BG if i % 2 == 0 else CARD, Color(0, 0, 0, 0), 10)
+		var data: Dictionary = stats.levels[LEVELS[i].name]
+		var base_y := row.position.y + 35
+		_text(Vector2(columns[0], base_y - 6), _level_label(i), 17, INK, bold)
+		_text(Vector2(columns[0], base_y + 12), "%d×%d" % [LEVELS[i].size, LEVELS[i].size], 13, MUTED, font)
+		var level_solved := int(data.solved)
+		_text(Vector2(columns[1], base_y), str(level_solved), 17, INK, bold, true)
+		var best_text := _time(int(best[LEVELS[i].name])) if best.has(LEVELS[i].name) else "—"
+		_text(Vector2(columns[2], base_y), best_text, 17, GREEN if best.has(LEVELS[i].name) else MUTED, bold, true)
+		var average := _time(int(data.total_time) / level_solved) if level_solved > 0 else "—"
+		_text(Vector2(columns[3], base_y), average, 17, INK if level_solved > 0 else MUTED, bold, true)
+		_text(Vector2(columns[4], base_y), str(data.no_hints), 17, INK, bold, true)
+
+	if played == 0:
+		_text(Vector2(PANEL.get_center().x, PANEL.position.y + 470), tr("stats_empty"), 16, MUTED, font, true, width)
+	var reset: Rect2 = _buttons().reset
+	var armed_color := RED if reset_armed else Color(0, 0, 0, 0.6)
+	_box(reset, Color("fdecee") if reset_armed else (Color("ebebeb") if hover_button == "reset" else CARD), armed_color, 24)
+	_text(reset.get_center() + Vector2(0, 6), tr("confirm_reset") if reset_armed else tr("reset_stats"), 16, RED if reset_armed else INK, bold, true, reset.size.x - 20)
+
+
+func _draw_settings() -> void:
+	_draw_panel_frame(tr("settings"))
+	var buttons := _buttons()
+	_text(PANEL.position + Vector2(28, 112), tr("language"), 15, MUTED, bold)
+	for entry in StringsScript.LANGUAGES:
+		var id: String = "lang_" + entry[0]
+		_tab(buttons[id], entry[1], entry[0] == language, id)
+	var rows := {
+		"set_sound": [tr("sound"), tr("sound_desc"), sound_on],
+		"set_mistakes": [tr("show_mistakes"), tr("mistakes_desc"), show_mistakes],
+		"set_auto": [tr("auto_cross_setting"), tr("auto_cross_desc"), auto_cross],
+		"set_vibration": [tr("vibration"), tr("vibration_desc"), vibration_on],
+	}
+	for id: String in SETTING_ROWS:
+		var rect: Rect2 = buttons[id]
+		_box(rect, Color("f3f2ef") if hover_button == id else CARD, Color(0, 0, 0, 0.12), 14)
+		_text(rect.position + Vector2(20, 30), rows[id][0], 18, INK, bold, false, rect.size.x - 110)
+		_text(rect.position + Vector2(20, 54), rows[id][1], 14, MUTED, font, false, rect.size.x - 110)
+		var on: bool = rows[id][2]
+		var track := Rect2(rect.end.x - 72, rect.get_center().y - 13, 52, 26)
+		_box(track, BLUE if on else Color(0, 0, 0, 0.3), Color(0, 0, 0, 0), 13)
+		draw_circle(Vector2(track.end.x - 13 if on else track.position.x + 13, track.get_center().y), 10.0, Color.WHITE)
 
 
 # --- Drawing helpers -----------------------------------------------------------------------------
@@ -957,6 +1209,25 @@ func _clock_icon(center: Vector2, radius: float, color: Color) -> void:
 	draw_line(center, center + Vector2(radius * 0.45, 0), color, 2.0)
 
 
+## Round header button with a bar chart (statistics) or a gear (settings).
+func _icon_button(rect: Rect2, id: String) -> void:
+	var active := panel == id
+	var fill := BLUE_SOFT if active else (Color("ebebeb") if hover_button == id else CARD)
+	_box(rect, fill, BLUE if active else Color(0, 0, 0, 0.15), 23)
+	var c := rect.get_center()
+	var color := BLUE if active else INK
+	if id == "stats":
+		for i in 3:
+			var h: float = [8.0, 14.0, 20.0][i]
+			draw_rect(Rect2(c + Vector2(-11 + i * 8, 10 - h), Vector2(6, h)), color)
+	else:
+		for i in 8:
+			var a := i * TAU / 8.0
+			draw_line(c + Vector2.from_angle(a) * 8.0, c + Vector2.from_angle(a) * 12.5, color, 4.0)
+		draw_circle(c, 8.5, color)
+		draw_circle(c, 3.5, fill)
+
+
 func _box(rect: Rect2, fill: Color, border: Color, radius: int, border_width := 1) -> void:
 	var key := "%s|%s|%d|%d|%s" % [fill.to_html(), border.to_html(), radius, border_width, rect.size]
 	var style: StyleBoxFlat = styles.get(key)
@@ -977,43 +1248,42 @@ func _button(rect: Rect2, label: String, id: String, primary := false) -> void:
 	var hovered := hover_button == id
 	if primary:
 		_box(rect, BLUE.darkened(0.15) if hovered else BLUE, Color(0, 0, 0, 0), 24)
-		_text(rect.get_center() + Vector2(0, 6), label, 17, Color.WHITE, bold, true)
+		_text(rect.get_center() + Vector2(0, 6), label, 17, Color.WHITE, bold, true, rect.size.x - 16)
 	else:
 		_box(rect, Color("ebebeb") if hovered else CARD, Color(0, 0, 0, 0.6), 24)
-		_text(rect.get_center() + Vector2(0, 6), label, 17, INK, bold, true)
+		_text(rect.get_center() + Vector2(0, 6), label, 17, INK, bold, true, rect.size.x - 16)
 
 
 func _toggle(rect: Rect2, label: String, on: bool) -> void:
 	var hovered := hover_button == "auto"
 	_box(rect, (BLUE_SOFT.darkened(0.04) if hovered else BLUE_SOFT) if on else (Color("ebebeb") if hovered else CARD), BLUE if on else Color(0, 0, 0, 0.6), 24)
-	_text(rect.position + Vector2(20, 30), label, 17, BLUE if on else INK, bold)
+	_text(rect.position + Vector2(20, 30), label, 17, BLUE if on else INK, bold, false, rect.size.x - 90)
 	var track := Rect2(rect.end.x - 62, rect.position.y + 14, 42, 20)
 	_box(track, BLUE if on else Color(0, 0, 0, 0.35), Color(0, 0, 0, 0), 10)
 	draw_circle(Vector2(track.end.x - 10 if on else track.position.x + 10, track.get_center().y), 7.0, Color.WHITE)
 
 
-func _tab(rect: Rect2, label: String, active: bool) -> void:
-	if rect.size == Vector2.ZERO:
-		return
-	var id := ""
-	var buttons := _buttons()
-	for key: String in buttons:
-		if buttons[key] == rect:
-			id = key
-	var hovered := hover_button == id and id != ""
+func _tab(rect: Rect2, label: String, active: bool, id: String) -> void:
+	var hovered := hover_button == id
 	if active:
-		_box(rect, Color("01754f") if id.begins_with("level_") else INK, Color(0, 0, 0, 0), 20)
+		_box(rect, Color("01754f"), Color(0, 0, 0, 0), 20)
 		_text(rect.get_center() + Vector2(0, 6), label, 16, Color.WHITE, bold, true)
 	else:
 		_box(rect, Color("ebebeb") if hovered else CARD, Color(0, 0, 0, 0.35), 20)
 		_text(rect.get_center() + Vector2(0, 6), label, 16, INK, bold, true)
 
 
-func _text(pos: Vector2, text: String, font_size: int, color: Color, face: Font, centered := false) -> void:
+## Draws text; with `max_width`, long text (e.g. in other languages) shrinks to fit.
+func _text(pos: Vector2, text: String, font_size: int, color: Color, face: Font, centered := false, max_width := 0.0) -> void:
+	var fitted := font_size
+	var width := face.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fitted).x
+	if max_width > 0.0 and width > max_width:
+		fitted = maxi(9, int(font_size * max_width / width))
+		width = face.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fitted).x
 	var at := pos
 	if centered:
-		at.x -= face.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size).x / 2.0
-	draw_string(face, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, font_size, color)
+		at.x -= width / 2.0
+	draw_string(face, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fitted, color)
 
 
 func _time(seconds: int) -> String:
@@ -1031,6 +1301,18 @@ func _load() -> void:
 			best[key] = int(config.get_value("best", key))
 	auto_cross = bool(config.get_value("settings", "auto_cross", true))
 	level = clampi(int(config.get_value("settings", "level", 1)), 0, LEVELS.size() - 1)
+	language = str(config.get_value("settings", "language", ""))
+	sound_on = bool(config.get_value("settings", "sound", true))
+	vibration_on = bool(config.get_value("settings", "vibration", true))
+	show_mistakes = bool(config.get_value("settings", "show_mistakes", true))
+	var saved: Variant = config.get_value("stats", "data", {})
+	if saved is Dictionary and saved.has("levels"):
+		for key in ["played", "solved", "streak", "best_streak"]:
+			stats[key] = int(saved.get(key, 0))
+		for entry in LEVELS:
+			var data: Dictionary = saved.levels.get(entry.name, {})
+			for key in ["solved", "total_time", "no_hints"]:
+				stats.levels[entry.name][key] = int(data.get(key, 0))
 
 
 func _save() -> void:
@@ -1039,4 +1321,9 @@ func _save() -> void:
 		config.set_value("best", key, best[key])
 	config.set_value("settings", "auto_cross", auto_cross)
 	config.set_value("settings", "level", level)
+	config.set_value("settings", "language", language)
+	config.set_value("settings", "sound", sound_on)
+	config.set_value("settings", "vibration", vibration_on)
+	config.set_value("settings", "show_mistakes", show_mistakes)
+	config.set_value("stats", "data", stats)
 	config.save(SAVE_PATH)
