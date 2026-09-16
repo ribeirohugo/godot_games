@@ -9,6 +9,9 @@ extends Node2D
 
 const SfxScript := preload("res://scripts/sfx.gd")
 const Levels := preload("res://scripts/levels.gd")
+const Strings := preload("res://scripts/strings.gd")
+const ARABIC_FONT := "res://common/fonts/NotoSansArabic-subset.ttf"
+const CHINESE_FONT := "res://common/fonts/NotoSansSC-subset.ttf"
 
 const SCREEN := Vector2(1000, 760)
 const COLS := 24
@@ -44,6 +47,10 @@ const LEVEL_TILE := Vector2(180, 78)  # one level; worlds run across in rows
 const LEVEL_GAP := Vector2(16, 12)
 const LEVEL_GRID := Vector2(200, 240)  # top-left of the first world's first level
 const WORLD_LABEL_X := 34.0
+const LANG_COLS := 5  # the ten languages as two rows of five
+const LANG_TILE := Vector2(168, 74)
+const LANG_GAP := Vector2(14, 14)
+const LANG_GRID := Vector2(52, 300)
 const HEADINGS := {">": Vector2i.RIGHT, "<": Vector2i.LEFT, "^": Vector2i.UP, "v": Vector2i.DOWN}
 const STICK_PRESS := 0.55  # left stick counts as a direction past this
 const STICK_RELEASE := 0.35  # and must come back under this before it counts again
@@ -66,13 +73,16 @@ const BLADE_DARK := Color("4e5666")
 const PORTAL_COLORS := [Color("4dd0e1"), Color("ff8a65")]
 const LOCKED := Color("7d8878")
 
-enum State { MENU, LEVELS, PLAY, PAUSED, DYING, OVER, CLEARED }
+enum State { MENU, LEVELS, PLAY, PAUSED, DYING, OVER, CLEARED, SETTINGS }
 enum Mode { CLASSIC, CAMPAIGN }
 
 var state := State.MENU
 var resume_state := State.PLAY
+var settings_return_state := State.MENU  # where "back" in Settings returns to
 var option_index := 0
 var mode := Mode.CLASSIC
+var language := "en"
+var lang_cursor := 0  # highlighted tile on the settings screen
 
 # Gamepad: which kind of input was used last, and the left stick's position.
 var using_pad := false
@@ -160,7 +170,8 @@ var sfx
 
 
 func _ready() -> void:
-	font = ThemeDB.fallback_font
+	Strings.install()
+	font = _make_font()
 	sfx = SfxScript.new()
 	add_child(sfx)
 
@@ -187,7 +198,22 @@ func _ready() -> void:
 
 	_apply_theme(0)
 	_load_save()
+	TranslationServer.set_locale(language)
 	_reset_game()
+
+
+## The UI font, with the two scripts Godot's built-in font has no glyphs for wired in
+## as fallbacks: a missing character in the main font falls through to these in order.
+func _make_font() -> Font:
+	var variation := FontVariation.new()
+	variation.base_font = ThemeDB.fallback_font
+	var fallbacks: Array[Font] = []
+	for path in [ARABIC_FONT, CHINESE_FONT]:
+		var loaded := FontFile.new()
+		if loaded.load_dynamic_font(path) == OK:
+			fallbacks.append(loaded)
+	variation.fallbacks = fallbacks
+	return variation
 
 
 func _layer(parent: Node, painter: Callable) -> Node2D:
@@ -206,6 +232,9 @@ func _notification(what: int) -> void:
 
 func _unhandled_input(event: InputEvent) -> void:
 	_track_device(event)
+	if state == State.SETTINGS:
+		_settings_input(event)
+		return
 	if state == State.LEVELS:
 		_levels_input(event)
 		return
@@ -322,14 +351,14 @@ func _options_input(event: InputEvent) -> void:
 				JOY_BUTTON_A:
 					_choose(options[option_index])
 				JOY_BUTTON_START:
-					_choose("Resume" if state == State.PAUSED else options[option_index])
+					_choose("resume" if state == State.PAUSED else options[option_index])
 				JOY_BUTTON_B:
 					if state == State.PAUSED:
-						_choose("Resume")
+						_choose("resume")
 					elif state == State.CLEARED:
-						_choose("Level select")
+						_choose("level_select")
 					elif state == State.OVER:
-						_choose("Exit to menu")
+						_choose("exit_menu")
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
 			KEY_W, KEY_UP:
@@ -342,29 +371,30 @@ func _options_input(event: InputEvent) -> void:
 				_choose(options[option_index])
 			KEY_P:
 				if state == State.PAUSED:
-					_choose("Resume")
+					_choose("resume")
 			KEY_ESCAPE:
 				if state == State.CLEARED:
-					_choose("Level select")
+					_choose("level_select")
 				elif state != State.MENU:
-					_choose("Exit to menu")
+					_choose("exit_menu")
 
 
+## Each entry is both the dispatch key for _choose() and a tr() key for its label.
 func _options() -> Array:
 	match state:
 		State.PAUSED:
 			if mode == Mode.CAMPAIGN:
-				return ["Resume", "Restart", "Level select", "Exit to menu"]
-			return ["Resume", "Restart", "Exit to menu"]
+				return ["resume", "restart", "level_select", "exit_menu"]
+			return ["resume", "restart", "exit_menu"]
 		State.OVER:
 			if mode == Mode.CAMPAIGN:
-				return ["Retry level", "Level select", "Exit to menu"]
-			return ["Play again", "Exit to menu"]
+				return ["retry_level", "level_select", "exit_menu"]
+			return ["play_again", "exit_menu"]
 		State.CLEARED:
 			if _flat() + 1 < Levels.total():
-				return ["Next level", "Replay level", "Level select"]
-			return ["Level select", "Exit to menu"]
-	return ["Campaign", "Classic"]
+				return ["next_level", "replay_level", "level_select"]
+			return ["level_select", "exit_menu"]
+	return ["campaign", "classic", "settings"]
 
 
 func _options_top() -> float:
@@ -391,22 +421,24 @@ func _option_at(point: Vector2) -> int:
 
 func _choose(option: String) -> void:
 	match option:
-		"Classic":
+		"classic":
 			mode = Mode.CLASSIC
 			_start_game()
-		"Campaign":
+		"campaign":
 			_open_levels(Levels.split(unlocked - 1))
-		"Restart", "Play again", "Retry level", "Replay level":
+		"settings":
+			_open_settings()
+		"restart", "play_again", "retry_level", "replay_level":
 			_start_game()
-		"Next level":
+		"next_level":
 			_goto(_flat() + 1)
 			_start_game()
-		"Resume":
+		"resume":
 			state = resume_state
 			sfx.play("select")
-		"Level select":
+		"level_select":
 			_open_levels(Vector2i(world_index, stage_index))
-		"Exit to menu":
+		"exit_menu":
 			mode = Mode.CLASSIC
 			demo_world = 0
 			_reset_game()
@@ -490,6 +522,102 @@ func _pick_level() -> void:
 	_start_game()
 
 
+# --- Settings ------------------------------------------------------------------
+
+func _lang_tile_rect(index: int) -> Rect2:
+	var col := index % LANG_COLS
+	var row := index / LANG_COLS
+	return Rect2(LANG_GRID + Vector2(col, row) * (LANG_TILE + LANG_GAP), LANG_TILE)
+
+
+func _lang_at(point: Vector2) -> int:
+	for i in Strings.LANGUAGES.size():
+		if _lang_tile_rect(i).has_point(point):
+			return i
+	return -1
+
+
+func _language_index(code: String) -> int:
+	for i in Strings.LANGUAGES.size():
+		if Strings.LANGUAGES[i][0] == code:
+			return i
+	return 0
+
+
+## Moves the highlight around the two-row language grid, wrapping at both edges.
+func _move_lang_cursor(step: Vector2i) -> void:
+	var total := Strings.LANGUAGES.size()
+	var rows := int(ceil(float(total) / LANG_COLS))
+	var col := lang_cursor % LANG_COLS
+	var row := lang_cursor / LANG_COLS
+	if step.x != 0:
+		col = posmod(col + step.x, LANG_COLS)
+	if step.y != 0:
+		row = posmod(row + step.y, rows)
+	lang_cursor = mini(row * LANG_COLS + col, total - 1)
+	sfx.play("select")
+
+
+## Opens Settings on top of whichever menu-like screen called it; "back" returns there.
+func _open_settings() -> void:
+	settings_return_state = state
+	lang_cursor = _language_index(language)
+	state = State.SETTINGS
+	sfx.play("select")
+
+
+func _close_settings() -> void:
+	state = settings_return_state
+	sfx.play("select")
+
+
+## Switches the game's language immediately and saves it.
+func _pick_language(index: int) -> void:
+	lang_cursor = index
+	language = Strings.LANGUAGES[index][0]
+	TranslationServer.set_locale(language)
+	_save()
+	sfx.play("select")
+
+
+func _settings_input(event: InputEvent) -> void:
+	if event is InputEventMouseMotion:
+		var hovered := _lang_at(event.position)
+		if hovered >= 0 and hovered != lang_cursor:
+			lang_cursor = hovered
+			sfx.play("select")
+	elif event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
+		var clicked := _lang_at(event.position)
+		if clicked >= 0:
+			_pick_language(clicked)
+		elif _settings_back_rect().has_point(event.position):
+			_close_settings()
+	elif event is InputEventJoypadButton or event is InputEventJoypadMotion:
+		var move := _pad_direction(event)
+		if move != Vector2i.ZERO:
+			_move_lang_cursor(move)
+		elif event is InputEventJoypadButton and event.pressed:
+			match event.button_index:
+				JOY_BUTTON_A, JOY_BUTTON_START:
+					_pick_language(lang_cursor)
+				JOY_BUTTON_B:
+					_close_settings()
+	elif event is InputEventKey and event.pressed and not event.echo:
+		match event.physical_keycode:
+			KEY_W, KEY_UP:
+				_move_lang_cursor(Vector2i.UP)
+			KEY_S, KEY_DOWN:
+				_move_lang_cursor(Vector2i.DOWN)
+			KEY_A, KEY_LEFT:
+				_move_lang_cursor(Vector2i.LEFT)
+			KEY_D, KEY_RIGHT:
+				_move_lang_cursor(Vector2i.RIGHT)
+			KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
+				_pick_language(lang_cursor)
+			KEY_ESCAPE:
+				_close_settings()
+
+
 func _levels_input(event: InputEvent) -> void:
 	if event is InputEventMouseMotion:
 		var hovered := _level_at(event.position)
@@ -512,7 +640,7 @@ func _levels_input(event: InputEvent) -> void:
 				JOY_BUTTON_A, JOY_BUTTON_START:
 					_pick_level()
 				JOY_BUTTON_B:
-					_choose("Exit to menu")
+					_choose("exit_menu")
 	elif event is InputEventKey and event.pressed and not event.echo:
 		match event.physical_keycode:
 			KEY_W, KEY_UP:
@@ -526,7 +654,7 @@ func _levels_input(event: InputEvent) -> void:
 			KEY_ENTER, KEY_KP_ENTER, KEY_SPACE:
 				_pick_level()
 			KEY_ESCAPE:
-				_choose("Exit to menu")
+				_choose("exit_menu")
 
 
 # --- Game logic --------------------------------------------------------------
@@ -632,13 +760,12 @@ func _process(delta: float) -> void:
 	flash = maxf(flash - delta * 2.5, 0.0)
 	world.position = Vector2(randf_range(-1, 1), randf_range(-1, 1)) * shake * shake * 12.0
 
-	match state:
-		State.MENU, State.LEVELS, State.PLAY:
-			_advance(delta)
-		State.DYING:
-			_update_dying(delta)
-		State.CLEARED:
-			clear_time += delta
+	if state == State.PLAY or _demo_running():
+		_advance(delta)
+	elif state == State.DYING:
+		_update_dying(delta)
+	elif state == State.CLEARED:
+		clear_time += delta
 	_update_effects(delta)
 	_build_samples()
 
@@ -667,11 +794,19 @@ func _advance(delta: float) -> void:
 			return
 
 	step_timer += delta
-	while step_timer >= step_time and state in [State.PLAY, State.MENU, State.LEVELS]:
+	while step_timer >= step_time and (state == State.PLAY or _demo_running()):
 		step_timer -= step_time
 		if state != State.PLAY:
 			_autopilot()
 		_step()
+
+
+## True on the plain menu / level-select screens, and on Settings when opened from one
+## of them - the self-playing demo behind those screens keeps going either way.
+func _demo_running() -> bool:
+	if state in [State.MENU, State.LEVELS]:
+		return true
+	return state == State.SETTINGS and settings_return_state in [State.MENU, State.LEVELS]
 
 
 ## Campaign-only clocks: the countdown, the wandering poison, and the goal check.
@@ -878,7 +1013,7 @@ func _advance_blades() -> void:
 # --- Dying -------------------------------------------------------------------
 
 func _die(cause := "crash") -> void:
-	if state == State.MENU or state == State.LEVELS:
+	if _demo_running():
 		_reset_game()
 		return
 	state = State.DYING
@@ -1040,8 +1175,12 @@ func _cell_center(cell: Vector2i) -> Vector2:
 func _load_save() -> void:
 	var config := ConfigFile.new()
 	if config.load(SAVE_PATH) != OK:
+		language = Strings.system_language()
 		return
 	best = config.get_value("score", "best", 0)
+	language = str(config.get_value("settings", "language", Strings.system_language()))
+	if _language_index(language) == 0 and language != "en":
+		language = "en"  # a language from an older or unrecognized save
 	if int(config.get_value("campaign", "version", 0)) != SAVE_VERSION:
 		return  # campaign progress from an older, differently numbered set of levels
 	unlocked = clampi(config.get_value("campaign", "unlocked", 1), 1, Levels.total())
@@ -1054,6 +1193,7 @@ func _save() -> void:
 	config.set_value("campaign", "version", SAVE_VERSION)
 	config.set_value("campaign", "unlocked", unlocked)
 	config.set_value("campaign", "scores", level_scores)
+	config.set_value("settings", "language", language)
 	config.save(SAVE_PATH)
 
 
@@ -1437,12 +1577,12 @@ func _draw_blades(c: CanvasItem) -> void:
 func _draw_hud(c: CanvasItem) -> void:
 	var campaign := mode == Mode.CAMPAIGN and not level.is_empty()
 	if campaign:
-		_text(c, "%s  %s" % [Levels.label(world_index, stage_index), Levels.world_name(world_index).to_upper()],
+		_text(c, "%s  %s" % [Levels.label(world_index, stage_index), tr("world_%d" % (world_index + 1)).to_upper()],
 				Vector2(30, 40), 20, Color(TEXT, 0.6), 5, 0.0)
 		_text(c, level.name, Vector2(30, 74), 34, theme.accent, 8, 0.0)
 	else:
 		_text(c, "SNAKE", Vector2(30, 64), 46, SNAKE_BODY, 10, 0.0)
-	_text(c, "SCORE", Vector2(SCREEN.x / 2.0, 32), 16, Color(TEXT, 0.6))
+	_text(c, tr("hud_score"), Vector2(SCREEN.x / 2.0, 32), 16, Color(TEXT, 0.6))
 	_text(c, str(score), Vector2(SCREEN.x / 2.0, 74), 42, TEXT, 8)
 	if campaign:
 		_draw_goal(c)
@@ -1459,62 +1599,65 @@ func _draw_hud(c: CanvasItem) -> void:
 		for p in [Vector2(-12, 8), Vector2(12, 8), Vector2(14, -7), Vector2(6, 0), Vector2(0, -11), Vector2(-6, 0), Vector2(-14, -7)]:
 			points.append(crown + p)
 		c.draw_colored_polygon(points, GOLD)
-		_text(c, str(best), Vector2(882, 62), 30, GOLD, 6, 0.0)
+		_text(c, str(best), Vector2(924, 62), 30, GOLD, 6, 1.0)  # right-aligned, whatever the score's width
 
 	var board := Rect2(BOARD_POS, BOARD_SIZE)
 	match state:
 		State.MENU:
 			c.draw_rect(board, Color(0, 0, 0, 0.45))
 			_draw_title(c)
-			_text(c, "Eat apples, grow long, and don't bite yourself!", Vector2(SCREEN.x / 2.0, 385), 24, TEXT, 6)
-			_text(c, "Campaign: %d of %d levels cleared" % [level_scores.size(), Levels.total()],
+			_text(c, tr("hud_tagline"), Vector2(SCREEN.x / 2.0, 385), 24, TEXT, 6)
+			_text(c, tr("hud_campaign_progress") % [level_scores.size(), Levels.total()],
 					Vector2(SCREEN.x / 2.0, 424), 20, Color(GOLD, 0.8), 5)
 			_draw_options(c)
-			var controls := "D-pad / stick: steer      Start: pause" if using_pad else "Arrows / WASD: steer      P / Esc: pause"
-			_text(c, "%s      Golden apples: +%d" % [controls, GOLDEN_POINTS],
+			var controls := tr("help_pad_steer") if using_pad else tr("help_kb_steer")
+			_text(c, "%s      %s" % [controls, tr("hud_golden_worth") % GOLDEN_POINTS],
 					Vector2(SCREEN.x / 2.0, 700), 18, Color(TEXT, 0.7), 5)
 		State.LEVELS:
 			c.draw_rect(board, Color(0, 0, 0, 0.66))
-			_text(c, "CAMPAIGN", Vector2(SCREEN.x / 2.0, 186), 52, theme.accent, 12)
-			_text(c, "%d of %d levels cleared  ·  clear one to open the next" % [level_scores.size(), Levels.total()],
+			_text(c, tr("campaign_title"), Vector2(SCREEN.x / 2.0, 186), 52, theme.accent, 12)
+			_text(c, tr("campaign_progress") % [level_scores.size(), Levels.total()],
 					Vector2(SCREEN.x / 2.0, 216), 19, Color(TEXT, 0.7), 5)
 			_draw_level_grid(c)
 			_text(c, _pick_blurb(), Vector2(SCREEN.x / 2.0, 706), 19,
 					Color(TEXT, 0.78 if _is_open(pick_world, pick_stage) else 0.45), 5)
-			_text(c, "D-pad to choose, A to play, B to go back" if using_pad else "Arrows or WASD to choose, Enter or click to play, Esc to go back",
+			_text(c, tr("help_pad_levels") if using_pad else tr("help_kb_levels"),
 					Vector2(SCREEN.x / 2.0, 732), 16, Color(TEXT, 0.5), 4)
 		State.PAUSED:
 			c.draw_rect(board, Color(0, 0, 0, 0.55))
-			_text(c, "PAUSED", Vector2(SCREEN.x / 2.0, 330), 80, TEXT, 12)
+			_text(c, tr("paused_title"), Vector2(SCREEN.x / 2.0, 330), 80, TEXT, 12)
 			_draw_options(c)
 		State.OVER:
 			c.draw_rect(board, Color(0, 0, 0, 0.55))
-			_text(c, "GAME OVER", Vector2(SCREEN.x / 2.0, 300), 84, Color("ff6b6b"), 14)
+			_text(c, tr("game_over_title"), Vector2(SCREEN.x / 2.0, 300), 84, Color("ff6b6b"), 14)
 			_text(c, _death_line(), Vector2(SCREEN.x / 2.0, 344), 24, Color(TEXT, 0.75), 6)
-			_text(c, "Score %d      Apples %d" % [score, apples], Vector2(SCREEN.x / 2.0, 392), 32, TEXT, 8)
+			_text(c, tr("hud_score_apples") % [score, apples], Vector2(SCREEN.x / 2.0, 392), 32, TEXT, 8)
 			if campaign:
-				_text(c, "%s: %d of %d" % [_goal_noun(level.goal), goal_progress, level.goal.count],
+				_text(c, tr("goal_progress_line") % [_goal_noun(level.goal), goal_progress, level.goal.count],
 						Vector2(SCREEN.x / 2.0, 434), 26, Color(theme.accent, 0.95), 6)
 			elif new_best:
 				var pulse := 1.0 + sin(clock * 6.0) * 0.08
-				_text(c, "New best!", Vector2(SCREEN.x / 2.0, 434), int(30 * pulse), GOLD, 8)
+				_text(c, tr("new_best"), Vector2(SCREEN.x / 2.0, 434), int(30 * pulse), GOLD, 8)
 			else:
-				_text(c, "Best %d" % best, Vector2(SCREEN.x / 2.0, 434), 26, Color(TEXT, 0.7), 6)
+				_text(c, tr("best_value") % best, Vector2(SCREEN.x / 2.0, 434), 26, Color(TEXT, 0.7), 6)
 			_draw_options(c)
 		State.CLEARED:
 			c.draw_rect(board, Color(0, 0, 0, 0.55))
 			var last: bool = _flat() + 1 >= Levels.total()
 			var beat := _pop_scale(clear_time) * (1.0 + sin(clock * 5.0) * 0.04)
-			_text(c, "CAMPAIGN COMPLETE" if last else "LEVEL CLEAR",
+			_text(c, tr("campaign_complete") if last else tr("level_clear"),
 					Vector2(SCREEN.x / 2.0, 312), int((58 if last else 76) * beat), SNAKE_SHINE, 14)
 			_text(c, "%s · %s" % [Levels.label(world_index, stage_index), level.name],
 					Vector2(SCREEN.x / 2.0, 356), 28, TEXT, 7)
-			_text(c, "Score %d      Apples %d" % [score, apples], Vector2(SCREEN.x / 2.0, 404), 30, TEXT, 8)
+			_text(c, tr("hud_score_apples") % [score, apples], Vector2(SCREEN.x / 2.0, 404), 30, TEXT, 8)
 			if new_best:
-				_text(c, "Best on this level!", Vector2(SCREEN.x / 2.0, 444), 26, GOLD, 7)
+				_text(c, tr("best_on_level"), Vector2(SCREEN.x / 2.0, 444), 26, GOLD, 7)
 			elif level_scores.has(_flat()):
-				_text(c, "Best %d" % int(level_scores[_flat()]), Vector2(SCREEN.x / 2.0, 444), 24, Color(TEXT, 0.7), 6)
+				_text(c, tr("best_value") % int(level_scores[_flat()]), Vector2(SCREEN.x / 2.0, 444), 24, Color(TEXT, 0.7), 6)
 			_draw_options(c)
+		State.SETTINGS:
+			c.draw_rect(board, Color(0, 0, 0, 0.7))
+			_draw_settings(c)
 
 	if flash > 0.0:
 		c.draw_rect(Rect2(Vector2.ZERO, SCREEN), Color(flash_color, flash * 0.35))
@@ -1528,9 +1671,9 @@ func _draw_goal(c: CanvasItem) -> void:
 	if level.time > 0.0:
 		var low := time_left < 10.0
 		var tint := Color("ff6b6b") if low and fmod(clock, 0.6) < 0.35 else GOLD
-		_text(c, "%d:%02d left" % [int(time_left) / 60, int(time_left) % 60], Vector2(970, 28), 20, tint, 5, 1.0)
-	_text(c, "%s  %d / %d" % [_goal_noun(goal), done, goal.count], Vector2(970, 54), 23, TEXT, 6, 1.0)
-	var bar := Rect2(700, 63, 270, 11)
+		_text(c, "%d:%02d left" % [int(time_left) / 60, int(time_left) % 60], Vector2(924, 28), 20, tint, 5, 1.0)
+	_text(c, "%s  %d / %d" % [_goal_noun(goal), done, goal.count], Vector2(924, 54), 23, TEXT, 6, 1.0)
+	var bar := Rect2(700, 63, 224, 11)
 	c.draw_rect(bar.grow(2), INK)
 	c.draw_rect(bar, Color(0, 0, 0, 0.45))
 	var fill := float(done) / maxf(goal.count, 1)
@@ -1540,38 +1683,38 @@ func _draw_goal(c: CanvasItem) -> void:
 func _goal_noun(goal: Dictionary) -> String:
 	match goal.kind:
 		"apples":
-			return "Apples"
+			return tr("goal_apples")
 		"golden":
-			return "Golden"
+			return tr("goal_golden")
 		"length":
-			return "Length"
+			return tr("goal_length")
 		"survive":
-			return "Seconds"
-	return "Goal"
+			return tr("goal_seconds")
+	return tr("goal_default")
 
 
 func _goal_short(goal: Dictionary) -> String:
 	match goal.kind:
 		"apples":
-			return "Eat %d apples" % goal.count
+			return tr("goal_short_apples") % goal.count
 		"golden":
-			return "Eat %d golden" % goal.count
+			return tr("goal_short_golden") % goal.count
 		"length":
-			return "Grow to %d" % goal.count
+			return tr("goal_short_length") % goal.count
 		"survive":
-			return "Survive %ds" % goal.count
+			return tr("goal_short_survive") % goal.count
 	return ""
 
 
 func _death_line() -> String:
 	match death_cause:
 		"poison":
-			return "Rotten to the core."
+			return tr("death_poison")
 		"blade":
-			return "Cut down by a blade."
+			return tr("death_blade")
 		"time":
-			return "Out of time."
-	return "You hit something."
+			return tr("death_time")
+	return tr("death_default")
 
 
 ## The whole campaign at a glance: one row per world, one tile per level. A level you
@@ -1587,9 +1730,9 @@ func _draw_level_grid(c: CanvasItem) -> void:
 
 		# The world's own ground colour runs down the left edge of its row.
 		c.draw_rect(Rect2(WORLD_LABEL_X - 10.0, row.position.y, 8.0, row.size.y), wash if reached else Color(wash, 0.3))
-		_text(c, "WORLD %d" % (world + 1), Vector2(WORLD_LABEL_X + 8.0, row.position.y + 28.0), 15,
+		_text(c, tr("world_label") % (world + 1), Vector2(WORLD_LABEL_X + 8.0, row.position.y + 28.0), 15,
 				Color(TEXT, 0.55 if reached else 0.3), 0, 0.0)
-		_text(c, Levels.world_name(world) if reached else "? ? ?", Vector2(WORLD_LABEL_X + 8.0, row.position.y + 54.0), 23,
+		_text(c, tr("world_%d" % (world + 1)) if reached else tr("world_unknown"), Vector2(WORLD_LABEL_X + 8.0, row.position.y + 54.0), 23,
 				tint if reached else Color(LOCKED, 0.5), 0, 0.0)
 
 		for stage in stages:
@@ -1618,14 +1761,14 @@ func _draw_level_tile(c: CanvasItem, world: int, stage: int) -> void:
 	_text(c, Levels.label(world, stage), at + Vector2(12, 26), 19, Color(ink, 0.9 if open else 0.55), 0, 0.0)
 	if not open:
 		_draw_padlock(c, at + Vector2(rect.size.x - 24, 44), ink)
-		_text(c, "Locked", at + Vector2(12, 52), 16, Color(ink, 0.55), 0, 0.0)
+		_text(c, tr("level_locked"), at + Vector2(12, 52), 16, Color(ink, 0.55), 0, 0.0)
 		return
 	var data := Levels.get_level(world, stage)
 	_text(c, data.name, at + Vector2(12, 50), 17, ink, 0, 0.0)
 	_text(c, _goal_short(data.goal), at + Vector2(12, 69), 13, Color(ink, 0.7), 0, 0.0)
 	if cleared:
 		_draw_tick(c, at + Vector2(rect.size.x - 24, 22), INK if picked else GOLD)
-		_text(c, "Best %d" % int(level_scores[flat]), Vector2(at.x + rect.size.x - 12, at.y + 74), 13,
+		_text(c, tr("best_value") % int(level_scores[flat]), Vector2(at.x + rect.size.x - 12, at.y + 74), 13,
 				Color(ink, 0.75), 0, 1.0)
 
 
@@ -1634,7 +1777,7 @@ func _pick_blurb() -> String:
 	if _is_open(pick_world, pick_stage):
 		return Levels.get_level(pick_world, pick_stage).hint
 	var next := Levels.split(unlocked - 1)
-	return "Locked. Clear %s to carry on." % Levels.label(next.x, next.y)
+	return tr("campaign_locked_hint") % Levels.label(next.x, next.y)
 
 
 func _draw_padlock(c: CanvasItem, pos: Vector2, tint: Color) -> void:
@@ -1665,17 +1808,77 @@ func _draw_options(c: CanvasItem) -> void:
 	var options := _options()
 	for i in options.size():
 		var rect := _option_rect(i)
-		var baseline := rect.position.y + rect.size.y / 2.0 + 10.0
-		if i == option_index:
+		var selected := i == option_index
+		if selected:
 			c.draw_rect(rect.grow(3), INK)
 			c.draw_rect(rect, SNAKE_BODY)
-			_text(c, options[i], Vector2(SCREEN.x / 2.0, baseline), 28, INK)
 		else:
 			c.draw_rect(rect, Color(0, 0, 0, 0.4))
 			c.draw_rect(rect, Color(TEXT, 0.35), false, 2.0)
-			_text(c, options[i], Vector2(SCREEN.x / 2.0, baseline), 28, TEXT)
-	_text(c, "D-pad or stick to choose, A to select" if using_pad else "W / S or arrows to choose, Enter or click to select",
+		var ink := INK if selected else TEXT
+		if options[i] == "settings":
+			_draw_settings_button_label(c, rect, ink)
+		else:
+			_text(c, tr(options[i]), Vector2(SCREEN.x / 2.0, rect.position.y + rect.size.y / 2.0 + 10.0), 28, ink)
+	_text(c, tr("help_pad_choose") if using_pad else tr("help_kb_choose"),
 			Vector2(SCREEN.x / 2.0, _option_rect(options.size()).position.y + 20.0), 16, Color(TEXT, 0.55), 4)
+
+
+## The Settings button: a small gear beside its label, the pair centered as one unit.
+func _draw_settings_button_label(c: CanvasItem, rect: Rect2, ink: Color) -> void:
+	var label := tr("settings")
+	var label_width := font.get_string_size(label, HORIZONTAL_ALIGNMENT_LEFT, -1, 28).x
+	var icon_d := 26.0
+	var gap := 10.0
+	var start_x := rect.get_center().x - (icon_d + gap + label_width) / 2.0
+	var mid_y := rect.get_center().y
+	_draw_gear_icon(c, Vector2(start_x + icon_d / 2.0, mid_y), icon_d / 2.0, ink)
+	_text(c, label, Vector2(start_x + icon_d + gap, mid_y + 10.0), 28, ink, 0, 0.0)
+
+
+## A small gear at `center`, `radius` across, in `color`.
+func _draw_gear_icon(c: CanvasItem, center: Vector2, radius: float, color: Color) -> void:
+	for i in 8:
+		var a := i * TAU / 8.0
+		c.draw_line(center + Vector2.from_angle(a) * (radius * 0.65), center + Vector2.from_angle(a) * radius, color, 3.0, true)
+	c.draw_circle(center, radius * 0.68, color, true, -1.0, true)
+	c.draw_circle(center, radius * 0.3, INK, true, -1.0, true)
+
+
+func _settings_back_rect() -> Rect2:
+	return Rect2(SCREEN.x / 2.0 - 90.0, 560.0, 180.0, OPTION_HEIGHT - 10.0)
+
+
+## Ten language tiles in two rows, the current one highlighted, plus a Back button.
+func _draw_settings(c: CanvasItem) -> void:
+	_text(c, tr("settings_title"), Vector2(SCREEN.x / 2.0, 220), 52, theme.accent, 12)
+	_text(c, tr("settings_language"), Vector2(SCREEN.x / 2.0, 264), 20, Color(TEXT, 0.7), 5)
+
+	for i in Strings.LANGUAGES.size():
+		var rect := _lang_tile_rect(i)
+		var active: bool = Strings.LANGUAGES[i][0] == language
+		var picked := i == lang_cursor
+		c.draw_rect(rect.grow(3), INK)
+		if picked:
+			c.draw_rect(rect, theme.accent)
+		elif active:
+			c.draw_rect(rect, Color(theme.accent, 0.3))
+		else:
+			c.draw_rect(rect, Color(0, 0, 0, 0.45))
+		c.draw_rect(rect, Color(TEXT, 0.3), false, 2.0)
+		var ink := INK if picked else TEXT
+		_text(c, Strings.LANGUAGES[i][1], rect.get_center() + Vector2(0, 7), 19, ink, 0)
+		if active:
+			_draw_tick(c, rect.position + Vector2(20, 18), INK if picked else theme.accent)
+
+	var back := _settings_back_rect()
+	c.draw_rect(back.grow(3), INK)
+	c.draw_rect(back, Color(0, 0, 0, 0.4))
+	c.draw_rect(back, Color(TEXT, 0.35), false, 2.0)
+	_text(c, tr("settings_back"), back.get_center() + Vector2(0, 8), 22, TEXT)
+
+	_text(c, tr("settings_hint_pad") if using_pad else tr("settings_hint_kb"),
+			Vector2(SCREEN.x / 2.0, 660), 16, Color(TEXT, 0.55), 4)
 
 
 ## Draws text with its baseline at `pos.y`; `align` 0 = left, 0.5 = centered, 1 = right.

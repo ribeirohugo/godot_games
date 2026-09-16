@@ -3,3 +3,4 @@ build/
 .env
 # Copies of the root common\ folders, made by _config.bat.
 /*/common/intro/
+/*/common/fonts/
