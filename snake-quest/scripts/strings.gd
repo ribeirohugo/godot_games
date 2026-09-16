@@ -1,11 +1,16 @@
 extends RefCounted
 ## Every text in the game, in each language. The game shows them with tr("key").
-## Values follow the order of LANGUAGES. "Snake" and individual level names are not translated -
+## Values follow the order of LANGUAGES. Individual level names are not translated -
 ## there are 20 of them, in English only for now.
 
 const LANGUAGES := [["en", "English"], ["pt_PT", "Português (PT)"], ["es", "Español"], ["pt_BR", "Português (BR)"], ["fr", "Français"], ["it", "Italiano"], ["de", "Deutsch"], ["sv", "Svenska"], ["ar", "العربية"], ["zh_CN", "中文"]]
 
 const TEXT := {
+	# The game's own name. Portuguese uses the game's traditional local names rather than a
+	# literal translation of "Snake Quest"; every other language keeps the English name.
+	"game_name": ["Snake Quest", "Jogo da Cobra", "Snake Quest", "Jogo da Cobrinha", "Snake Quest",
+			"Snake Quest", "Snake Quest", "Snake Quest", "Snake Quest", "Snake Quest"],
+
 	# Modes.
 	"campaign": ["Campaign", "Campanha", "Campaña", "Campanha", "Campagne",
 			"Campagna", "Kampagne", "Kampanj", "الحملة", "战役"],

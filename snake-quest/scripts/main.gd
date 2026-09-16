@@ -1,5 +1,5 @@
 extends Node2D
-## Snake: steer the snake to eat apples and grow, without hitting the walls or yourself.
+## Snake Quest: steer the snake to eat apples and grow, without hitting the walls or yourself.
 ## Arrows / WASD or a gamepad (D-pad / left stick) steer; P, Esc or Start pauses.
 ## Behind the menu the snake plays by itself.
 ##
@@ -1581,7 +1581,7 @@ func _draw_hud(c: CanvasItem) -> void:
 				Vector2(30, 40), 20, Color(TEXT, 0.6), 5, 0.0)
 		_text(c, level.name, Vector2(30, 74), 34, theme.accent, 8, 0.0)
 	else:
-		_text(c, "SNAKE", Vector2(30, 64), 46, SNAKE_BODY, 10, 0.0)
+		_text(c, tr("game_name"), Vector2(30, 64), 46, SNAKE_BODY, 10, 0.0, 300.0)
 	_text(c, tr("hud_score"), Vector2(SCREEN.x / 2.0, 32), 16, Color(TEXT, 0.6))
 	_text(c, str(score), Vector2(SCREEN.x / 2.0, 74), 42, TEXT, 8)
 	if campaign:
@@ -1791,15 +1791,22 @@ func _draw_tick(c: CanvasItem, pos: Vector2, tint: Color) -> void:
 	c.draw_line(pos + Vector2(-2, 6), pos + Vector2(9, -7), tint, 3.5, true)
 
 
-## Big wavy title, one letter at a time.
+## Big wavy title, one letter at a time. The size shrinks to fit: "Snake Quest" is a lot
+## wider than "SNAKE" was, and some languages (Jogo da Cobrinha) are wider still.
 func _draw_title(c: CanvasItem) -> void:
-	var title := "SNAKE"
+	var title := tr("game_name")
+	var max_width := 880.0
 	var size := 128
-	var x := SCREEN.x / 2.0 - font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x / 2.0
+	var width := font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	if width > max_width:
+		size = maxi(40, int(size * max_width / width))
+		width = font.get_string_size(title, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	var outline := maxi(4, int(size * 0.17))
+	var x := SCREEN.x / 2.0 - width / 2.0
 	for i in title.length():
 		var letter := title[i]
 		var at := Vector2(x, 320 + sin(clock * 3.0 - i * 0.7) * 10.0)
-		c.draw_string_outline(font, at, letter, HORIZONTAL_ALIGNMENT_LEFT, -1, size, 22, INK)
+		c.draw_string_outline(font, at, letter, HORIZONTAL_ALIGNMENT_LEFT, -1, size, outline, INK)
 		c.draw_string(font, at, letter, HORIZONTAL_ALIGNMENT_LEFT, -1, size, SNAKE_BODY.lerp(SNAKE_SHINE, 0.5 + 0.5 * sin(clock * 3.0 - i * 0.7)))
 		x += font.get_string_size(letter, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
 
@@ -1882,9 +1889,14 @@ func _draw_settings(c: CanvasItem) -> void:
 
 
 ## Draws text with its baseline at `pos.y`; `align` 0 = left, 0.5 = centered, 1 = right.
-func _text(c: CanvasItem, text: String, pos: Vector2, size: int, color: Color, outline := 0, align := 0.5) -> void:
+## `max_width` shrinks the font size to fit if the text (e.g. a long translated name) would
+## otherwise overflow it; 0 leaves the size as given.
+func _text(c: CanvasItem, text: String, pos: Vector2, size: int, color: Color, outline := 0, align := 0.5, max_width := 0.0) -> void:
 	size = maxi(size, 1)  # sizes that animate from a scale of 0 would upset the text server
 	var width := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
+	if max_width > 0.0 and width > max_width:
+		size = maxi(1, int(size * max_width / width))
+		width = font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x
 	var at := Vector2(pos.x - width * align, pos.y)
 	if outline > 0:
 		c.draw_string_outline(font, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, size, outline, Color(INK, color.a))
