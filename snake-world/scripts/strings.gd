@@ -7,9 +7,9 @@ const LANGUAGES := [["en", "English"], ["pt_PT", "Português (PT)"], ["es", "Esp
 
 const TEXT := {
 	# The game's own name. Portuguese uses the game's traditional local names rather than a
-	# literal translation of "Snake Quest"; every other language keeps the English name.
-	"game_name": ["Snake Quest", "Jogo da Cobra", "Snake Quest", "Jogo da Cobrinha", "Snake Quest",
-			"Snake Quest", "Snake Quest", "Snake Quest", "Snake Quest", "Snake Quest"],
+	# literal translation of "Snake World"; every other language keeps the English name.
+	"game_name": ["Snake World", "Jogo da Cobra", "Snake World", "Jogo da Cobrinha", "Snake World",
+			"Snake World", "Snake World", "Snake World", "Snake World", "Snake World"],
 
 	# Modes.
 	"campaign": ["Campaign", "Campanha", "Campaña", "Campanha", "Campagne",

@@ -11,10 +11,10 @@ if not exist "%TEMPLATES%\windows_release_x86_64.exe" (
 )
 
 if not exist "%PROJECT%\build\windows" mkdir "%PROJECT%\build\windows"
-"%GODOT_CONSOLE%" --headless --path "%PROJECT%" --export-release "Windows" "%PROJECT%\build\windows\SnakeQuest.exe"
+"%GODOT_CONSOLE%" --headless --path "%PROJECT%" --export-release "Windows" "%PROJECT%\build\windows\SnakeWorld.exe"
 if errorlevel 1 (
     echo Export failed, see the messages above.
     exit /b 1
 )
 echo.
-echo Done: build\windows\SnakeQuest.exe
+echo Done: build\windows\SnakeWorld.exe

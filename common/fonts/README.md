@@ -24,4 +24,4 @@ python -m fontTools.subset NotoSansSC-static.ttf --unicodes="U+0000-007F,U+3000-
 ```
 
 A game loads these at runtime with `FontFile.load_dynamic_font()` and lists them as
-`fallbacks` on a `FontVariation` wrapping `ThemeDB.fallback_font` — see `snake-quest/scripts/main.gd`.
+`fallbacks` on a `FontVariation` wrapping `ThemeDB.fallback_font` — see `snake-world/scripts/main.gd`.

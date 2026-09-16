@@ -1,5 +1,5 @@
 extends Node2D
-## Snake Quest: steer the snake to eat apples and grow, without hitting the walls or yourself.
+## Snake World: steer the snake to eat apples and grow, without hitting the walls or yourself.
 ## Arrows / WASD or a gamepad (D-pad / left stick) steer; P, Esc or Start pauses.
 ## Behind the menu the snake plays by itself.
 ##
@@ -1593,13 +1593,14 @@ func _draw_hud(c: CanvasItem) -> void:
 		c.draw_circle(apple, 10.0, APPLE_RED, true, -1.0, true)
 		c.draw_circle(apple + Vector2(-3, -3), 2.5, Color(1, 1, 1, 0.7), true, -1.0, true)
 		_text(c, str(apples), Vector2(760, 62), 30, TEXT, 6, 0.0)
-		# Best score.
-		var crown := Vector2(860, 50)
+		# Best score, right-aligned, with the crown kept just left of it however many digits it has.
+		var best_width := font.get_string_size(str(best), HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x
+		var crown := Vector2(minf(860.0, 924.0 - best_width - 24.0), 50)
 		var points := PackedVector2Array()
 		for p in [Vector2(-12, 8), Vector2(12, 8), Vector2(14, -7), Vector2(6, 0), Vector2(0, -11), Vector2(-6, 0), Vector2(-14, -7)]:
 			points.append(crown + p)
 		c.draw_colored_polygon(points, GOLD)
-		_text(c, str(best), Vector2(924, 62), 30, GOLD, 6, 1.0)  # right-aligned, whatever the score's width
+		_text(c, str(best), Vector2(924, 62), 30, GOLD, 6, 1.0)
 
 	var board := Rect2(BOARD_POS, BOARD_SIZE)
 	match state:
@@ -1672,7 +1673,16 @@ func _draw_goal(c: CanvasItem) -> void:
 		var low := time_left < 10.0
 		var tint := Color("ff6b6b") if low and fmod(clock, 0.6) < 0.35 else GOLD
 		_text(c, "%d:%02d left" % [int(time_left) / 60, int(time_left) % 60], Vector2(924, 28), 20, tint, 5, 1.0)
-	_text(c, "%s  %d / %d" % [_goal_noun(goal), done, goal.count], Vector2(924, 54), 23, TEXT, 6, 1.0)
+	# The count is drawn apart from the noun and forced left-to-right: in the Arabic locale the
+	# text is laid out right-to-left and "14 / 38" would read "38 / 14".
+	var count_text := "%d / %d" % [done, goal.count]
+	var count_width := font.get_string_size(count_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 23).x
+	var count_at := Vector2(924 - count_width, 54)
+	c.draw_string_outline(font, count_at, count_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 23, 6, INK,
+			TextServer.JUSTIFICATION_KASHIDA | TextServer.JUSTIFICATION_WORD_BOUND, TextServer.DIRECTION_LTR)
+	c.draw_string(font, count_at, count_text, HORIZONTAL_ALIGNMENT_LEFT, -1, 23, TEXT,
+			TextServer.JUSTIFICATION_KASHIDA | TextServer.JUSTIFICATION_WORD_BOUND, TextServer.DIRECTION_LTR)
+	_text(c, _goal_noun(goal), Vector2(924 - count_width - 12, 54), 23, TEXT, 6, 1.0)
 	var bar := Rect2(700, 63, 224, 11)
 	c.draw_rect(bar.grow(2), INK)
 	c.draw_rect(bar, Color(0, 0, 0, 0.45))
@@ -1791,7 +1801,7 @@ func _draw_tick(c: CanvasItem, pos: Vector2, tint: Color) -> void:
 	c.draw_line(pos + Vector2(-2, 6), pos + Vector2(9, -7), tint, 3.5, true)
 
 
-## Big wavy title, one letter at a time. The size shrinks to fit: "Snake Quest" is a lot
+## Big wavy title, one letter at a time. The size shrinks to fit: "Snake World" is a lot
 ## wider than "SNAKE" was, and some languages (Jogo da Cobrinha) are wider still.
 func _draw_title(c: CanvasItem) -> void:
 	var title := tr("game_name")
