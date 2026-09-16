@@ -25,6 +25,18 @@ func _ready() -> void:
 		return sin(TAU * note * t) * 0.45 * exp(-fmod(t, 0.1) * 12.0))
 	sounds["select"] = _make(0.05, func(t: float) -> float:
 		return sin(TAU * 880.0 * t) * 0.3 * exp(-t * 60.0))
+	# Swallowing rot: a queasy warble sliding downhill.
+	sounds["poison"] = _make(0.45, func(t: float) -> float:
+		var wobble := 1.0 + 0.25 * sin(TAU * 11.0 * t)
+		return _sweep(t, 420.0 * wobble, 90.0, 0.45) * 0.35 * exp(-t * 4.0) + _noise() * 0.1 * exp(-t * 9.0))
+	# Level cleared: a rising four-note flourish.
+	sounds["clear"] = _make(0.75, func(t: float) -> float:
+		var note: float = [523.0, 659.0, 784.0, 1047.0][mini(int(t / 0.15), 3)]
+		var ring := 1.0 if t < 0.45 else exp(-(t - 0.45) * 7.0)
+		return (sin(TAU * note * t) + 0.35 * sin(TAU * note * 2.0 * t)) * 0.3 * exp(-fmod(t, 0.15) * 7.0) * ring)
+	# A locked level: a flat, dead thud.
+	sounds["locked"] = _make(0.12, func(t: float) -> float:
+		return sin(TAU * 150.0 * t) * 0.3 * exp(-t * 30.0))
 
 	for i in 6:
 		var player := AudioStreamPlayer.new()
