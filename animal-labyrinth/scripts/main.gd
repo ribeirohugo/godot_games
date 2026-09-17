@@ -4,11 +4,14 @@ extends Node2D
 
 const Art := preload("res://scripts/art.gd")
 const Tiles := preload("res://scripts/tiles.gd")
+const StringsScript := preload("res://scripts/strings.gd")
 const BoardViewScript := preload("res://scripts/board_view.gd")
 const AnimalScript := preload("res://scripts/animal.gd")
 const TilePreviewScript := preload("res://scripts/tile_preview.gd")
+const IconWidgetScript := preload("res://scripts/icon_widget.gd")
 const SfxScript := preload("res://scripts/sfx.gd")
 
+const GAME_TITLE := "Animal Labyrinth"  # not localized, like this developer's other games
 const START_CELL := Vector2i(-1, 1)  # start block left of the top-left slot's middle row
 const STEP_TIME := 0.16
 const START_DELAY := 0.5
@@ -16,21 +19,22 @@ const MAX_STEPS := 2000  # safety net; the wall-follower always ends at the goal
 const ROUND_BONUS := 50
 const SAVE_PATH := "user://save.cfg"
 
-# Same order as the animal kinds in animal.gd and the goal food in art.gd.
+# Same order as the animal kinds in animal.gd and the goal food in art.gd. Text is looked up
+# through scripts/strings.gd, with "who_key" the subject phrase (e.g. "the monkey").
 const ANIMALS := [
-	{"name": "Macaco", "who": "o macaco", "food": "às bananas", "win": "Bananas!"},
-	{"name": "Cavalo", "who": "o cavalo", "food": "às cenouras", "win": "Cenouras!"},
-	{"name": "Gato", "who": "o gato", "food": "ao peixe", "win": "Peixe!"},
-	{"name": "Cão", "who": "o cão", "food": "ao osso", "win": "Osso!"},
+	{"name_key": "animal_monkey", "who_key": "who_monkey", "win_key": "win_bananas"},
+	{"name_key": "animal_horse", "who_key": "who_horse", "win_key": "win_carrots"},
+	{"name_key": "animal_cat", "who_key": "who_cat", "win_key": "win_fish"},
+	{"name_key": "animal_dog", "who_key": "who_dog", "win_key": "win_bone"},
 ]
 
 # Each difficulty deals from its own subset of tiles.gd's pieces (Tiles.POOLS): Fácil keeps to
 # simple straights, bends and dead ends with more of them per round; Difícil adds the zigzags
 # and the stepping-stone trap tile, with fewer tiles and a longer path to the goal.
 const DIFFICULTIES := [
-	{"name": "Fácil", "tiles_per_round": 10, "goal_start": 3, "goal_cap": 5},
-	{"name": "Médio", "tiles_per_round": 8, "goal_start": 3, "goal_cap": 7},
-	{"name": "Difícil", "tiles_per_round": 6, "goal_start": 4, "goal_cap": 7},
+	{"name_key": "difficulty_easy", "tiles_per_round": 10, "goal_start": 3, "goal_cap": 5},
+	{"name_key": "difficulty_medium", "tiles_per_round": 8, "goal_start": 3, "goal_cap": 7},
+	{"name_key": "difficulty_hard", "tiles_per_round": 6, "goal_start": 4, "goal_cap": 7},
 ]
 
 # Land cells just outside the grid that connect to the goal island, grouped by how many
@@ -62,6 +66,13 @@ var round_num := 1
 var animal_kind := 0
 var difficulty_kind := 1
 var round_token := 0  # bumped every round so a walk left over from an old round stops
+var language := ""  # resolved to a real code (see StringsScript.system_language) once loaded
+var sound_on := true
+var settings_open := false
+var overlay_kind := ""  # "title", "won" or "lost"; lets a language change redraw the right text
+var lose_title_key := ""
+var lose_body_key := ""
+var lose_was_record := false
 
 var score_label: Label
 var round_label: Label
@@ -77,11 +88,22 @@ var overlay_button: Button
 var animal_picker: HBoxContainer
 var difficulty_picker: HBoxContainer
 var overlay_action := Callable()
+var home_button: Button
+var settings_button: Button
+var settings_overlay: Control
+var overlay_box: Control
+var language_row: HBoxContainer
+var sound_button: Button
 
 
 func _ready() -> void:
 	randomize()
+	StringsScript.install()
 	_load_save()
+	if language == "":
+		language = StringsScript.system_language()
+	TranslationServer.set_locale(language)
+	AudioServer.set_bus_mute(AudioServer.get_bus_index("Master"), not sound_on)
 
 	board_view = BoardViewScript.new()
 	board_view.main = self
@@ -106,14 +128,14 @@ func _ready() -> void:
 
 func _process(_delta: float) -> void:
 	hover_slot = -1
-	if phase == "build":
+	if phase == "build" and not settings_open:
 		var slot := slot_of(Art.cell_at(board_view.get_local_mouse_position()))
 		if slot >= 0 and board[slot] == 0:
 			hover_slot = slot
 
 
 func _unhandled_input(event: InputEvent) -> void:
-	if phase != "build":
+	if phase != "build" or settings_open:
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
 		var slot := slot_of(Art.cell_at(board_view.get_local_mouse_position()))
@@ -230,7 +252,7 @@ func _walk() -> void:
 			sfx.play("splash")
 			await get_tree().create_timer(0.8).timeout
 			if token == round_token:
-				_lose("Splash!", "%s saltou para a água: não havia terra à frente." % _who(true))
+				_lose("lose_title_splash", "lose_body_splash")
 			return
 
 		dir = next_dir
@@ -245,10 +267,10 @@ func _walk() -> void:
 			_win()
 			return
 		if pos == START_CELL:
-			_lose("Sem saída!", "%s não encontrou caminho até %s e voltou ao início." % [_who(true), ANIMALS[animal_kind].food])
+			_lose("lose_title_noway", "lose_body_noway")
 			return
 
-	_lose("Perdido!", "%s andou às voltas sem chegar %s." % [_who(true), ANIMALS[animal_kind].food])
+	_lose("lose_title_lost", "lose_body_lost")
 
 
 func _score_cell(cell: Vector2i) -> void:
@@ -270,27 +292,38 @@ func _win() -> void:
 	score += bonus
 	sfx.play("win")
 	animal.cheer()
-	_float_text("BÓNUS +%d" % bonus, animal.position + Vector2(0, -24), Color(0.6, 1, 0.5))
+	_float_text(tr("bonus_float") % bonus, animal.position + Vector2(0, -24), Color(0.6, 1, 0.5))
 	_save()
 	_update_hud()
 	await get_tree().create_timer(1.6).timeout
 	if token != round_token:
 		return
-	_show_overlay(ANIMALS[animal_kind].win,
-		"%s chegou à ilha.\nBónus da ronda: +%d\nPontuação: %d" % [_who(true), bonus, score],
-		"Ronda %d" % (round_num + 1), _next_round)
+	_show_win_overlay()
 
 
-func _lose(title: String, reason: String) -> void:
+func _show_win_overlay() -> void:
+	var bonus := ROUND_BONUS * round_num
+	_show_overlay(ANIMALS[animal_kind].win_key,
+		tr("win_body") % [_who(true), bonus, score],
+		tr("round_button") % (round_num + 1), _next_round, false, "won")
+
+
+func _lose(title_key: String, body_key: String) -> void:
 	phase = "lost"
 	sfx.play("lose")
-	var record := score > high_score
+	lose_title_key = title_key
+	lose_body_key = body_key
+	lose_was_record = score > high_score and score > 0
 	_save()
 	_update_hud()
-	var body := "%s\n\nPontuação final: %d" % [reason, score]
-	if record and score > 0:
-		body += "\nNovo recorde!"
-	_show_overlay(title, body, "Jogar outra vez", _start_game, true)
+	_show_lose_overlay()
+
+
+func _show_lose_overlay() -> void:
+	var body := "%s\n\n%s" % [tr(lose_body_key) % _who(true), tr("final_score") % score]
+	if lose_was_record:
+		body += "\n" + tr("new_record")
+	_show_overlay(lose_title_key, body, "play_again", _start_game, true, "lost")
 
 
 func _float_text(text: String, at: Vector2, color: Color) -> void:
@@ -328,7 +361,7 @@ func _build_hud() -> void:
 	var left_box := VBoxContainer.new()
 	left_box.alignment = BoxContainer.ALIGNMENT_CENTER
 	left.add_child(left_box)
-	left_box.add_child(_label("PRÓXIMA PEÇA", 14, Color(0.75, 0.88, 1.0)))
+	left_box.add_child(_label("next_tile_header", 14, Color(0.75, 0.88, 1.0)))
 	preview = TilePreviewScript.new()
 	preview.custom_minimum_size = Vector2(150, 96)
 	preview.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -343,7 +376,7 @@ func _build_hud() -> void:
 	right.custom_minimum_size = Vector2(150, 0)
 	var right_box := VBoxContainer.new()
 	right.add_child(right_box)
-	right_box.add_child(_label("PONTUAÇÃO", 14, Color(0.75, 0.88, 1.0)))
+	right_box.add_child(_label("score_header", 14, Color(0.75, 0.88, 1.0)))
 	score_label = _label("0", 34, Color(1, 0.9, 0.4))
 	right_box.add_child(score_label)
 	round_label = _label("", 16, Color.WHITE)
@@ -370,6 +403,7 @@ func _build_hud() -> void:
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
 	overlay.add_child(center)
 	var box := _panel(center)
+	overlay_box = box
 	box.custom_minimum_size = Vector2(380, 0)
 	var vbox := VBoxContainer.new()
 	vbox.add_theme_constant_override("separation", 14)
@@ -394,12 +428,145 @@ func _build_hud() -> void:
 			overlay_action.call())
 	vbox.add_child(overlay_button)
 
+	# Top-center icon bar: settings (always available) and back-to-menu (mid-round only).
+	# Added after the overlay so it stays on top and clickable even while the overlay is dimmed.
+	var icon_bar := HBoxContainer.new()
+	icon_bar.add_theme_constant_override("separation", 8)
+	icon_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 14)
+	root.add_child(icon_bar)
+	settings_button = _icon_button("gear")
+	settings_button.pressed.connect(_open_settings)
+	icon_bar.add_child(settings_button)
+	home_button = _icon_button("home")
+	home_button.pressed.connect(_go_to_menu)
+	home_button.visible = false
+	icon_bar.add_child(home_button)
+
+	_build_settings_overlay(root)
+
+
+func _icon_button(kind: String) -> Button:
+	var button := Button.new()
+	button.custom_minimum_size = Vector2(44, 44)
+	button.focus_mode = Control.FOCUS_NONE
+	var icon := IconWidgetScript.new()
+	icon.kind = kind
+	icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(icon)
+	return button
+
+
+## Small modal for language and sound, reachable from any screen via the gear icon.
+func _build_settings_overlay(root: Control) -> void:
+	settings_overlay = ColorRect.new()
+	settings_overlay.color = Color(0.02, 0.08, 0.15, 0.65)
+	settings_overlay.set_anchors_preset(Control.PRESET_FULL_RECT)
+	settings_overlay.visible = false
+	root.add_child(settings_overlay)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	settings_overlay.add_child(center)
+	var box := _panel(center)
+	box.custom_minimum_size = Vector2(360, 0)
+	var vbox := VBoxContainer.new()
+	vbox.add_theme_constant_override("separation", 14)
+	box.add_child(vbox)
+	vbox.add_child(_label("settings", 28, Color(1, 0.9, 0.4)))
+
+	vbox.add_child(_label("language", 15, Color(0.75, 0.88, 1.0)))
+	language_row = HBoxContainer.new()
+	language_row.alignment = BoxContainer.ALIGNMENT_CENTER
+	language_row.add_theme_constant_override("separation", 8)
+	var lang_group := ButtonGroup.new()
+	for entry in StringsScript.LANGUAGES:
+		var code: String = entry[0]
+		var lang_button := Button.new()
+		lang_button.text = entry[1]  # native language name; never translated
+		lang_button.toggle_mode = true
+		lang_button.button_group = lang_group
+		lang_button.button_pressed = code == language
+		lang_button.focus_mode = Control.FOCUS_NONE
+		lang_button.custom_minimum_size = Vector2(0, 40)
+		lang_button.set_meta("code", code)
+		lang_button.pressed.connect(_choose_language.bind(code))
+		language_row.add_child(lang_button)
+	vbox.add_child(language_row)
+
+	vbox.add_child(_label("sound", 15, Color(0.75, 0.88, 1.0)))
+	sound_button = Button.new()
+	sound_button.text = "sound_on" if sound_on else "sound_off"
+	sound_button.custom_minimum_size = Vector2(200, 44)
+	sound_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	sound_button.pressed.connect(_toggle_sound)
+	vbox.add_child(sound_button)
+
+	var close_button := Button.new()
+	close_button.text = "close"
+	close_button.custom_minimum_size = Vector2(160, 44)
+	close_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	close_button.pressed.connect(_close_settings)
+	vbox.add_child(close_button)
+
+
+func _open_settings() -> void:
+	sfx.play("click")
+	settings_open = true
+	overlay_box.visible = false
+	settings_overlay.visible = true
+
+
+func _close_settings() -> void:
+	sfx.play("click")
+	settings_open = false
+	overlay_box.visible = true
+	settings_overlay.visible = false
+
+
+func _choose_language(code: String) -> void:
+	sfx.play("click")
+	language = code
+	TranslationServer.set_locale(language)
+	for button: Button in language_row.get_children():
+		button.set_pressed_no_signal(button.get_meta("code", "") == code)
+	_update_hud()
+	_refresh_overlay_text()
+	_save()
+
+
+func _toggle_sound() -> void:
+	sound_on = not sound_on
+	AudioServer.set_bus_mute(AudioServer.get_bus_index("Master"), not sound_on)
+	sound_button.text = "sound_on" if sound_on else "sound_off"
+	if sound_on:
+		sfx.play("click")
+	_save()
+
+
+## Cancels the current round (if any) and returns to the title screen.
+func _go_to_menu() -> void:
+	sfx.play("click")
+	round_token += 1
+	phase = "title"
+	_update_hud()
+	_show_title()
+
+
+## Redraws the currently open title/win/lose overlay after a language change.
+func _refresh_overlay_text() -> void:
+	if not overlay.visible:
+		return
+	match overlay_kind:
+		"title":
+			_show_title()
+		"won":
+			_show_win_overlay()
+		"lost":
+			_show_lose_overlay()
+
 
 func _show_title() -> void:
-	_show_overlay("Animal Labyrinth",
-		"Escolhe um animal e uma dificuldade, e coloca as peças no mar para lhe fazer um caminho até %s.\n" % ANIMALS[animal_kind].food
-		+ "Depois ele anda sozinho e vira sempre para a esquerda quando pode.",
-		"Jogar", _start_game, true)
+	_show_overlay(GAME_TITLE, "title_body", "play", _start_game, true, "title")
 
 
 func _build_animal_picker() -> HBoxContainer:
@@ -433,7 +600,7 @@ func _build_animal_picker() -> HBoxContainer:
 		look.position = Vector2(45, 70)
 		look.walking = i == animal_kind
 		button.add_child(look)
-		var name_label := _label(ANIMALS[i].name, 15, Color.WHITE)
+		var name_label := _label(ANIMALS[i].name_key, 15, Color.WHITE)
 		name_label.set_anchors_and_offsets_preset(Control.PRESET_BOTTOM_WIDE)
 		name_label.offset_top = -26
 		name_label.offset_bottom = -4
@@ -466,7 +633,7 @@ func _build_difficulty_picker() -> HBoxContainer:
 	var group := ButtonGroup.new()
 	for i in DIFFICULTIES.size():
 		var button := Button.new()
-		button.text = DIFFICULTIES[i].name
+		button.text = DIFFICULTIES[i].name_key
 		button.toggle_mode = true
 		button.button_group = group
 		button.button_pressed = i == difficulty_kind
@@ -486,13 +653,14 @@ func _choose_difficulty(kind: int) -> void:
 	_save()
 
 
-## "o gato", or "O gato" at the start of a sentence.
+## "the cat", or "The cat" at the start of a sentence.
 func _who(capital := false) -> String:
-	var who: String = ANIMALS[animal_kind].who
+	var who: String = tr(ANIMALS[animal_kind].who_key)
 	return who.left(1).to_upper() + who.substr(1) if capital else who
 
 
-func _show_overlay(title: String, body: String, button: String, action: Callable, picker := false) -> void:
+func _show_overlay(title: String, body: String, button: String, action: Callable, picker := false, kind := "") -> void:
+	overlay_kind = kind
 	animal_picker.visible = picker
 	difficulty_picker.visible = picker
 	overlay_title.text = title
@@ -507,18 +675,19 @@ func _update_hud() -> void:
 	if score_label == null:
 		return
 	preview.tile = current_tile
-	points_label.text = "+%d pontos" % Tiles.points(current_tile) if current_tile > 0 else " "
-	tiles_label.text = "Peças: %d" % tiles_left
+	points_label.text = tr("points_suffix") % Tiles.points(current_tile) if current_tile > 0 else " "
+	tiles_label.text = tr("tiles_left") % tiles_left
 	score_label.text = str(score)
-	round_label.text = "Ronda %d · %s" % [round_num, DIFFICULTIES[difficulty_kind].name]
-	best_label.text = "Recorde: %d" % maxi(high_score, score)
+	round_label.text = tr("round_label") % [round_num, tr(DIFFICULTIES[difficulty_kind].name_key)]
+	best_label.text = tr("best") % maxi(high_score, score)
 	match phase:
 		"build":
-			hint_label.text = "Clica num espaço para pôr a peça. Faltam %d." % tiles_left
+			hint_label.text = tr("hint_build") % tiles_left
 		"walk":
-			hint_label.text = "%s vira sempre para a esquerda quando pode..." % _who(true)
+			hint_label.text = tr("hint_walk") % _who(true)
 		_:
 			hint_label.text = ""
+	home_button.visible = phase == "build" or phase == "walk"
 
 
 func _layout() -> void:
@@ -586,13 +755,17 @@ func _load_save() -> void:
 		high_score = cfg.get_value("score", "best", 0)
 		animal_kind = clampi(cfg.get_value("settings", "animal", 0), 0, ANIMALS.size() - 1)
 		difficulty_kind = clampi(cfg.get_value("settings", "difficulty", 1), 0, DIFFICULTIES.size() - 1)
+		language = str(cfg.get_value("settings", "language", ""))
+		sound_on = bool(cfg.get_value("settings", "sound", true))
 
 
-## Stores the best score, the chosen animal and the chosen difficulty.
+## Stores the best score and the chosen animal, difficulty, language and sound setting.
 func _save() -> void:
 	high_score = maxi(high_score, score)
 	var cfg := ConfigFile.new()
 	cfg.set_value("score", "best", high_score)
 	cfg.set_value("settings", "animal", animal_kind)
 	cfg.set_value("settings", "difficulty", difficulty_kind)
+	cfg.set_value("settings", "language", language)
+	cfg.set_value("settings", "sound", sound_on)
 	cfg.save(SAVE_PATH)
