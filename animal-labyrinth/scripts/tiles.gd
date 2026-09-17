@@ -42,6 +42,16 @@ const POINTS := [
 	60, 70, 70, 30, 30, 30, 30, 50, 50, 50, 50, 60, 60, 40, 40, 100,
 ]
 
+# Which tile numbers each difficulty deals from. Easy sticks to straights, bends, dead ends,
+# the meadow and plain shores. Medium adds junctions, the ring, stairs and the U-shapes.
+# Hard adds the zigzags and the stepping stones, whose two land cells sit too far apart to
+# walk between, so they only pay off (or trap you) at the very edge of a slot.
+const POOLS := [
+	[1, 2, 3, 4, 5, 6, 12, 13, 14, 15, 16, 20, 21, 22, 23, 30, 31],
+	[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 30, 31],
+	[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32],
+]
+
 
 static func count() -> int:
 	return PATTERNS.size()
@@ -53,3 +63,7 @@ static func is_land(tile: int, x: int, y: int) -> bool:
 
 static func points(tile: int) -> int:
 	return POINTS[tile - 1]
+
+
+static func pool(difficulty: int) -> Array:
+	return POOLS[difficulty].duplicate()

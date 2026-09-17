@@ -1,5 +1,5 @@
 extends Node2D
-## Labyrinth Animal: place tiles on a 4x4 island grid, then the chosen animal walks on its own,
+## Animal Labyrinth: place tiles on a 4x4 island grid, then the chosen animal walks on its own,
 ## always keeping to its left, and has to reach its food.
 
 const Art := preload("res://scripts/art.gd")
@@ -10,7 +10,6 @@ const TilePreviewScript := preload("res://scripts/tile_preview.gd")
 const SfxScript := preload("res://scripts/sfx.gd")
 
 const START_CELL := Vector2i(-1, 1)  # start block left of the top-left slot's middle row
-const TILES_PER_ROUND := 8
 const STEP_TIME := 0.16
 const START_DELAY := 0.5
 const MAX_STEPS := 2000  # safety net; the wall-follower always ends at the goal or back at the start
@@ -23,6 +22,15 @@ const ANIMALS := [
 	{"name": "Cavalo", "who": "o cavalo", "food": "às cenouras", "win": "Cenouras!"},
 	{"name": "Gato", "who": "o gato", "food": "ao peixe", "win": "Peixe!"},
 	{"name": "Cão", "who": "o cão", "food": "ao osso", "win": "Osso!"},
+]
+
+# Each difficulty deals from its own subset of tiles.gd's pieces (Tiles.POOLS): Fácil keeps to
+# simple straights, bends and dead ends with more of them per round; Difícil adds the zigzags
+# and the stepping-stone trap tile, with fewer tiles and a longer path to the goal.
+const DIFFICULTIES := [
+	{"name": "Fácil", "tiles_per_round": 10, "goal_start": 3, "goal_cap": 5},
+	{"name": "Médio", "tiles_per_round": 8, "goal_start": 3, "goal_cap": 7},
+	{"name": "Difícil", "tiles_per_round": 6, "goal_start": 4, "goal_cap": 7},
 ]
 
 # Land cells just outside the grid that connect to the goal island, grouped by how many
@@ -52,6 +60,7 @@ var score := 0
 var high_score := 0
 var round_num := 1
 var animal_kind := 0
+var difficulty_kind := 1
 var round_token := 0  # bumped every round so a walk left over from an old round stops
 
 var score_label: Label
@@ -66,6 +75,7 @@ var overlay_title: Label
 var overlay_body: Label
 var overlay_button: Button
 var animal_picker: HBoxContainer
+var difficulty_picker: HBoxContainer
 var overlay_action := Callable()
 
 
@@ -155,12 +165,13 @@ func _reset_round() -> void:
 	scored_slots.clear()
 	board_view.clear_drops()
 
-	var options: Array = GOALS[mini(3 + round_num, 7)]
+	var difficulty: Dictionary = DIFFICULTIES[difficulty_kind]
+	var options: Array = GOALS[mini(difficulty.goal_start + round_num, difficulty.goal_cap)]
 	_set_goal(options[randi() % options.size()])
 
-	deck = range(1, Tiles.count() + 1)
+	deck = Tiles.pool(difficulty_kind)
 	deck.shuffle()
-	tiles_left = TILES_PER_ROUND
+	tiles_left = difficulty.tiles_per_round
 	current_tile = deck.pop_back()
 
 	animal.reset(Art.cell_pos(Vector2(START_CELL)), 0)
@@ -371,6 +382,8 @@ func _build_hud() -> void:
 	vbox.add_child(overlay_body)
 	animal_picker = _build_animal_picker()
 	vbox.add_child(animal_picker)
+	difficulty_picker = _build_difficulty_picker()
+	vbox.add_child(difficulty_picker)
 	overlay_button = Button.new()
 	overlay_button.custom_minimum_size = Vector2(200, 48)
 	overlay_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -383,8 +396,8 @@ func _build_hud() -> void:
 
 
 func _show_title() -> void:
-	_show_overlay("Labyrinth Animal",
-		"Escolhe um animal e coloca as peças no mar para lhe fazer um caminho até %s.\n" % ANIMALS[animal_kind].food
+	_show_overlay("Animal Labyrinth",
+		"Escolhe um animal e uma dificuldade, e coloca as peças no mar para lhe fazer um caminho até %s.\n" % ANIMALS[animal_kind].food
 		+ "Depois ele anda sozinho e vira sempre para a esquerda quando pode.",
 		"Jogar", _start_game, true)
 
@@ -446,6 +459,33 @@ func _choose_animal(kind: int) -> void:
 	_update_hud()
 
 
+func _build_difficulty_picker() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.alignment = BoxContainer.ALIGNMENT_CENTER
+	row.add_theme_constant_override("separation", 10)
+	var group := ButtonGroup.new()
+	for i in DIFFICULTIES.size():
+		var button := Button.new()
+		button.text = DIFFICULTIES[i].name
+		button.toggle_mode = true
+		button.button_group = group
+		button.button_pressed = i == difficulty_kind
+		button.focus_mode = Control.FOCUS_NONE
+		button.custom_minimum_size = Vector2(90, 36)
+		button.pressed.connect(_choose_difficulty.bind(i))
+		row.add_child(button)
+	return row
+
+
+func _choose_difficulty(kind: int) -> void:
+	sfx.play("click")
+	difficulty_kind = kind
+	for i in difficulty_picker.get_child_count():
+		var button: Button = difficulty_picker.get_child(i)
+		button.set_pressed_no_signal(i == kind)
+	_save()
+
+
 ## "o gato", or "O gato" at the start of a sentence.
 func _who(capital := false) -> String:
 	var who: String = ANIMALS[animal_kind].who
@@ -454,6 +494,7 @@ func _who(capital := false) -> String:
 
 func _show_overlay(title: String, body: String, button: String, action: Callable, picker := false) -> void:
 	animal_picker.visible = picker
+	difficulty_picker.visible = picker
 	overlay_title.text = title
 	overlay_body.text = body
 	overlay_button.text = button
@@ -469,7 +510,7 @@ func _update_hud() -> void:
 	points_label.text = "+%d pontos" % Tiles.points(current_tile) if current_tile > 0 else " "
 	tiles_label.text = "Peças: %d" % tiles_left
 	score_label.text = str(score)
-	round_label.text = "Ronda %d" % round_num
+	round_label.text = "Ronda %d · %s" % [round_num, DIFFICULTIES[difficulty_kind].name]
 	best_label.text = "Recorde: %d" % maxi(high_score, score)
 	match phase:
 		"build":
@@ -544,12 +585,14 @@ func _load_save() -> void:
 	if cfg.load(SAVE_PATH) == OK:
 		high_score = cfg.get_value("score", "best", 0)
 		animal_kind = clampi(cfg.get_value("settings", "animal", 0), 0, ANIMALS.size() - 1)
+		difficulty_kind = clampi(cfg.get_value("settings", "difficulty", 1), 0, DIFFICULTIES.size() - 1)
 
 
-## Stores the best score and the chosen animal.
+## Stores the best score, the chosen animal and the chosen difficulty.
 func _save() -> void:
 	high_score = maxi(high_score, score)
 	var cfg := ConfigFile.new()
 	cfg.set_value("score", "best", high_score)
 	cfg.set_value("settings", "animal", animal_kind)
+	cfg.set_value("settings", "difficulty", difficulty_kind)
 	cfg.save(SAVE_PATH)
