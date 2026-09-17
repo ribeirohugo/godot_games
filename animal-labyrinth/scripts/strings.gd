@@ -85,6 +85,7 @@ const TEXT := {
 	"sound_on": ["Sound: On", "Som: Ligado", "Sonido: Activado", "Son : Activé", "Ton: Ein"],
 	"sound_off": ["Sound: Off", "Som: Desligado", "Sonido: Desactivado", "Son : Désactivé", "Ton: Aus"],
 	"close": ["Close", "Fechar", "Cerrar", "Fermer", "Schließen"],
+	"menu": ["Menu", "Menu", "Menú", "Menu", "Menü"],
 }
 
 

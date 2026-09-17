@@ -30,11 +30,13 @@ const ANIMALS := [
 
 # Each difficulty deals from its own subset of tiles.gd's pieces (Tiles.POOLS): Fácil keeps to
 # simple straights, bends and dead ends with more of them per round; Difícil adds the zigzags
-# and the stepping-stone trap tile, with fewer tiles and a longer path to the goal.
+# and the stepping-stone trap tile, with fewer tiles and a path that reaches its full length
+# sooner. goal_cap must never exceed tiles_per_round: _guaranteed_route_tiles() below needs at
+# least one tile per slot on the longest possible route, or a round could be unsolvable.
 const DIFFICULTIES := [
 	{"name_key": "difficulty_easy", "tiles_per_round": 10, "goal_start": 3, "goal_cap": 5},
 	{"name_key": "difficulty_medium", "tiles_per_round": 8, "goal_start": 3, "goal_cap": 7},
-	{"name_key": "difficulty_hard", "tiles_per_round": 6, "goal_start": 4, "goal_cap": 7},
+	{"name_key": "difficulty_hard", "tiles_per_round": 6, "goal_start": 4, "goal_cap": 6},
 ]
 
 # Land cells just outside the grid that connect to the goal island, grouped by how many
@@ -89,7 +91,8 @@ var animal_picker: HBoxContainer
 var difficulty_picker: HBoxContainer
 var overlay_action := Callable()
 var home_button: Button
-var settings_button: Button
+var game_bar: Control
+var overlay_settings_button: Button
 var settings_overlay: Control
 var overlay_box: Control
 var language_row: HBoxContainer
@@ -191,13 +194,60 @@ func _reset_round() -> void:
 	var options: Array = GOALS[mini(difficulty.goal_start + round_num, difficulty.goal_cap)]
 	_set_goal(options[randi() % options.size()])
 
-	deck = Tiles.pool(difficulty_kind)
+	# The route tiles guarantee a solution exists in this hand; the rest is random filler so the
+	# player still has to work out which tiles they are and where they go.
+	deck = _guaranteed_route_tiles()
+	var filler := Tiles.pool(difficulty_kind)
+	filler.shuffle()
+	for tile in filler:
+		if deck.size() >= difficulty.tiles_per_round:
+			break
+		deck.append(tile)
 	deck.shuffle()
-	tiles_left = difficulty.tiles_per_round
+	tiles_left = deck.size()
 	current_tile = deck.pop_back()
 
 	animal.reset(Art.cell_pos(Vector2(START_CELL)), 0)
 	_update_hud()
+
+
+## The tile.gd pattern number that connects `entry` to `exit`, one of "W" (west), "N" (north),
+## "E" (east) or "S" (south). Only the four combinations _guaranteed_route_tiles() can produce
+## are handled: a route only ever moves east or south, since the goal is always down-and-right
+## of the start slot.
+func _connector_tile(entry: String, exit: String) -> int:
+	if entry == "W" and exit == "E":
+		return 1  # straight west-east
+	if entry == "N" and exit == "S":
+		return 2  # straight north-south
+	if entry == "N" and exit == "E":
+		return 3  # bend north-east
+	return 5  # bend south-west (entry == "W" and exit == "S")
+
+
+## Builds the exact tiles needed for one route from the start to the goal, following a random
+## sequence of east/south moves through the slots. Adding these straights and bends to the deck
+## (see _reset_round) guarantees every round has a solution, without telling the player which
+## tiles they are or where they go — the deck is shuffled like any other tile.
+func _guaranteed_route_tiles() -> Array:
+	var south_exit := goal_cell.y > 11
+	var goal_col := (goal_cell.x / 3) if south_exit else 3
+	var goal_row := 3 if south_exit else (goal_cell.y / 3)
+
+	var moves := []
+	for i in goal_col:
+		moves.append("E")
+	for i in goal_row:
+		moves.append("S")
+	moves.shuffle()
+
+	var tiles := []
+	var entry := "W"  # the route always enters the first slot from the start, to the west
+	for move in moves:
+		tiles.append(_connector_tile(entry, move))
+		entry = "W" if move == "E" else "N"
+	tiles.append(_connector_tile(entry, "S" if south_exit else "E"))
+	return tiles
 
 
 func _place(slot: int) -> void:
@@ -418,6 +468,10 @@ func _build_hud() -> void:
 	vbox.add_child(animal_picker)
 	difficulty_picker = _build_difficulty_picker()
 	vbox.add_child(difficulty_picker)
+	# Play/Next round/Play again, with a softer Settings button below it.
+	var action_col := VBoxContainer.new()
+	action_col.alignment = BoxContainer.ALIGNMENT_CENTER
+	action_col.add_theme_constant_override("separation", 10)
 	overlay_button = Button.new()
 	overlay_button.custom_minimum_size = Vector2(200, 48)
 	overlay_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -426,34 +480,67 @@ func _build_hud() -> void:
 		overlay.visible = false
 		if overlay_action.is_valid():
 			overlay_action.call())
-	vbox.add_child(overlay_button)
+	action_col.add_child(overlay_button)
+	overlay_settings_button = _labeled_icon_button("gear", "settings", 200.0, true, true)
+	overlay_settings_button.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	overlay_settings_button.pressed.connect(_open_settings)
+	action_col.add_child(overlay_settings_button)
+	vbox.add_child(action_col)
 
-	# Top-center icon bar: settings (always available) and back-to-menu (mid-round only).
+	# Top-center bar, shown only while actually playing: Settings and back-to-menu. Small and
+	# translucent so it doesn't compete with the score panel next to it.
 	# Added after the overlay so it stays on top and clickable even while the overlay is dimmed.
-	var icon_bar := HBoxContainer.new()
-	icon_bar.add_theme_constant_override("separation", 8)
-	icon_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 14)
-	root.add_child(icon_bar)
-	settings_button = _icon_button("gear")
-	settings_button.pressed.connect(_open_settings)
-	icon_bar.add_child(settings_button)
-	home_button = _icon_button("home")
+	game_bar = HBoxContainer.new()
+	game_bar.add_theme_constant_override("separation", 6)
+	game_bar.set_anchors_and_offsets_preset(Control.PRESET_CENTER_TOP, Control.PRESET_MODE_MINSIZE, 14)
+	game_bar.visible = false
+	root.add_child(game_bar)
+	var game_settings_button := _labeled_icon_button("gear", "settings", 118.0, true)
+	game_settings_button.pressed.connect(_open_settings)
+	game_bar.add_child(game_settings_button)
+	home_button = _labeled_icon_button("home", "menu", 96.0, true)
 	home_button.pressed.connect(_go_to_menu)
-	home_button.visible = false
-	icon_bar.add_child(home_button)
+	game_bar.add_child(home_button)
 
 	_build_settings_overlay(root)
 
 
-func _icon_button(kind: String) -> Button:
+## A button with a small code-drawn icon on the left and a translated label on the right.
+## `soft` trades the bold yellow action-button look for a small, translucent pill.
+func _labeled_icon_button(kind: String, key: String, width: float, soft := false, center_text := false) -> Button:
 	var button := Button.new()
-	button.custom_minimum_size = Vector2(44, 44)
+	var height := 30.0 if soft else 44.0
+	button.custom_minimum_size = Vector2(width, height)
 	button.focus_mode = Control.FOCUS_NONE
+	if soft:
+		for state in ["normal", "hover", "pressed", "focus"]:
+			var style := StyleBoxFlat.new()
+			style.set_corner_radius_all(8)
+			match state:
+				"hover":
+					style.bg_color = Color(1, 1, 1, 0.18)
+				"pressed":
+					style.bg_color = Color(1, 1, 1, 0.26)
+				_:
+					style.bg_color = Color(1, 1, 1, 0.1)
+			button.add_theme_stylebox_override(state, style)
+	var icon_size := 16.0 if soft else 22.0
+	var icon_x := 10.0 if soft else 16.0
 	var icon := IconWidgetScript.new()
 	icon.kind = kind
-	icon.set_anchors_preset(Control.PRESET_FULL_RECT)
+	icon.color = Color(0.9, 0.94, 1.0) if soft else Color(0.25, 0.14, 0.02)
+	icon.position = Vector2(icon_x, (height - icon_size) * 0.5)
+	icon.size = Vector2(icon_size, icon_size)
 	icon.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	button.add_child(icon)
+	var label := _label(key, 13 if soft else 16, Color(0.85, 0.92, 1.0) if soft else Color(0.25, 0.14, 0.02))
+	label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER if center_text else HORIZONTAL_ALIGNMENT_LEFT
+	label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	label.offset_left = 0 if center_text else icon_x + icon_size + 6.0
+	label.offset_right = 0 if center_text else -8
+	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	button.add_child(label)
 	return button
 
 
@@ -663,6 +750,7 @@ func _show_overlay(title: String, body: String, button: String, action: Callable
 	overlay_kind = kind
 	animal_picker.visible = picker
 	difficulty_picker.visible = picker
+	overlay_settings_button.visible = kind != "won"
 	overlay_title.text = title
 	overlay_body.text = body
 	overlay_button.text = button
@@ -687,7 +775,7 @@ func _update_hud() -> void:
 			hint_label.text = tr("hint_walk") % _who(true)
 		_:
 			hint_label.text = ""
-	home_button.visible = phase == "build" or phase == "walk"
+	game_bar.visible = phase == "build" or phase == "walk"
 
 
 func _layout() -> void:
