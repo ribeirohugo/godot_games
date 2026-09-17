@@ -74,11 +74,11 @@ func _draw() -> void:
 
 func _draw_cell(cell: Vector2i) -> void:
 	var pos := Art.cell_pos(Vector2(cell))
-	if cell == main.island_cell:
-		return  # drawn as part of the island
+	if cell == main.island_cell or cell == main.goal_cell:
+		return  # both drawn as part of the island; see _draw()
 
 	var slot: int = main.slot_of(cell)
-	if (slot < 0 and cell != main.goal_cell and cell != main.START_CELL) or not main.land.has(cell):
+	if (slot < 0 and cell != main.START_CELL) or not main.land.has(cell):
 		return
 
 	if slot >= 0 and drop_started.has(slot):

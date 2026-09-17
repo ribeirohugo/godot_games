@@ -70,7 +70,9 @@ static func draw_land(ci: CanvasItem, c: Vector2, shore: Array, variation: int, 
 
 
 ## Island outline: a wobbly ring of points around `c`. `radius` is in cells, `inward` points
-## back toward the board so the shore there stays full and meets the connector block.
+## back toward the board. The island reaches out much further on that side, stretching all the
+## way past the connector cell so that cell is entirely inside the island's own sand and grass —
+## it is never drawn as a separate block, so there is nothing that can look bolted on.
 static func island_outline(c: Vector2, radius: float, inward: Vector2, shape_seed: int, scale: float = 1.0) -> PackedVector2Array:
 	var points := PackedVector2Array()
 	var phase := float(shape_seed % 97) * 0.37
@@ -79,8 +81,8 @@ static func island_outline(c: Vector2, radius: float, inward: Vector2, shape_see
 	for i in count:
 		var a := TAU * i / count
 		var wobble := 0.2 * sin(3.0 * a + phase) + 0.12 * sin(5.0 * a + phase * 1.7) + 0.07 * sin(8.0 * a + phase * 2.3)
-		var near := clampf(1.0 - absf(angle_difference(a, inward_angle)) / 1.0, 0.0, 1.0)
-		var r := lerpf(radius * (1.0 + wobble), radius * 1.08, near) * scale
+		var near := clampf(1.0 - absf(angle_difference(a, inward_angle)) / 1.6, 0.0, 1.0)
+		var r := lerpf(radius * (1.0 + wobble), radius * 1.9, near) * scale
 		points.append(c + cell_pos(Vector2(cos(a), sin(a)) * r))
 	return points
 
