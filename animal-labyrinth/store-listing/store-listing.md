@@ -12,6 +12,7 @@ Rendered in-engine from the game's own drawing code, icon and fonts — no exter
 | --- | --- |
 | `BoxArt.1080x1080.png`, `BoxArt.2160x2160.png` | Store display images: 1:1 box art |
 | `PosterArt.720x1080.png`, `PosterArt.1440x2160.png` | Store display images: 9:16 poster art |
+| `HeroArt.1920x1080.png`, `HeroArt.3840x2160.png` | Store display images: 16:9 Super hero art |
 | `screenshot.png` | Desktop screenshot: mid-round, several tiles placed, the monkey waiting at the start |
 | `screenshot-2.png` | Desktop screenshot: the title screen, with the animal and difficulty pickers |
 | `screenshot-3.png` | Desktop screenshot: the round-win overlay, animal cheering on its island |
