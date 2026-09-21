@@ -19,10 +19,10 @@ func _ready() -> void:
 		var env := sin(PI * local / 0.4)
 		var flick := exp(-fmod(local, 0.011) * 700.0)
 		return (_noise() * flick * 0.8 + _soft_noise(0.35) * 0.3) * env * 0.3)
-	# A card sliding off the deck.
-	sounds["deal"] = _make(0.09, func(t: float) -> float:
-		var env := sin(PI * t / 0.09)
-		return (_soft_noise(0.55) * 0.8 + _sweep(t, 1500.0, 700.0, 0.09) * 0.08) * env * 0.32)
+	# A card sliding off the deck: soft, since 40 of them play in a row.
+	sounds["deal"] = _make(0.08, func(t: float) -> float:
+		var env := sin(PI * t / 0.08)
+		return _soft_noise(0.18) * env * env * 0.06)
 	# A card put down on the felt.
 	sounds["play"] = _make(0.16, func(t: float) -> float:
 		var thump := sin(TAU * 150.0 * t) * exp(-t * 38.0)

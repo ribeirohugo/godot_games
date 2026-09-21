@@ -7,7 +7,8 @@ extends Node2D
 ## A hand is won with 61 points: 1 game, 2 with 91 or more (capote), 4 with every trick (bandeira).
 ## The first team to 4 games wins the match. Play goes counterclockwise: you, right, partner, left.
 ## Keys: Left / Right pick a card, Enter / Space play it, Esc menu.
-## Run with "-- --render-icon" (scene res://scenes/main.tscn) to redraw icon.png.
+## Run with "-- --render-icon" (scene res://scenes/main.tscn) to redraw icon.png, or with
+## "-- --render-store" to redraw the Box, Poster and Hero art in store-listing/.
 
 const SfxScript := preload("res://scripts/sfx.gd")
 const StringsScript := preload("res://scripts/strings.gd")
@@ -136,6 +137,8 @@ var particles := []
 var clock := 0.0
 var rng := RandomNumberGenerator.new()
 var rendering_icon := false
+var art_kind := ""  # "box", "poster" or "hero" when this copy only draws Store art
+var art_size := SCREEN
 
 var serif: Font
 var font: Font
@@ -173,8 +176,12 @@ func _ready() -> void:
 		vis[c] = {"pos": Vector2(640, 330), "rot": 0.0, "zoom": 1.0, "face": 0.0, "z": c}
 	for s in 4:
 		voids.append([false, false, false, false])
+	if art_kind != "":
+		return
 	if "--render-icon" in OS.get_cmdline_user_args():
 		_render_icon()
+	elif "--render-store" in OS.get_cmdline_user_args():
+		_render_store()
 
 
 func _font(names: Array, weight: int) -> Font:
@@ -186,6 +193,8 @@ func _font(names: Array, weight: int) -> Font:
 	var system := SystemFont.new()
 	system.font_names = PackedStringArray(names)
 	system.font_weight = weight
+	# Store art is drawn scaled up, so its text needs a font that stays sharp at any size.
+	system.multichannel_signed_distance_field = art_kind != ""
 	return system
 
 
@@ -217,8 +226,9 @@ void fragment() {
 """
 	var material := ShaderMaterial.new()
 	material.shader = shader
+	material.set_shader_parameter("size", art_size)
 	felt = ColorRect.new()
-	felt.size = SCREEN
+	felt.size = art_size
 	felt.material = material
 	felt.show_behind_parent = true
 	felt.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -1316,8 +1326,12 @@ func _draw_figure_half(suit: int, rank: int, ink: Color) -> void:
 # --- Drawing ---------------------------------------------------------------------------------
 
 func _draw() -> void:
+	if art_kind != "":
+		_draw_art()
+		return
 	if rendering_icon:
-		_draw_icon()
+		if icon_felt != null:
+			_draw_icon()
 		return
 	if phase == "title":
 		_draw_title()
@@ -1701,3 +1715,68 @@ func _draw_icon() -> void:
 		_draw_card(cards[i], pivot + Vector2(0, -150).rotated(a), a, 1.5, 1.0)
 	_draw_logo(Vector2(256, 424), 0.94)
 	_box(Rect2(7, 7, 498, 498), Color(0, 0, 0, 0), GOLD, 86, 7.0)
+
+
+# --- Store art -------------------------------------------------------------------------------
+
+## Renders the Store display images into store-listing/ (each at full size and at half size)
+## and quits. Each one is drawn by its own copy of this script, scaled 2x inside a SubViewport.
+func _render_store() -> void:
+	rendering_icon = true
+	var folder := ProjectSettings.globalize_path("res://store-listing")
+	for spec in [["BoxArt", Vector2(1080, 1080), "box"], ["PosterArt", Vector2(720, 1080), "poster"],
+			["HeroArt", Vector2(1920, 1080), "hero"]]:
+		var viewport := SubViewport.new()
+		viewport.size = Vector2i(spec[1] * 2.0)
+		viewport.msaa_2d = Viewport.MSAA_4X
+		viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+		var art: Node2D = get_script().new()
+		art.art_kind = spec[2]
+		art.art_size = spec[1]
+		art.rendering_icon = true
+		art.scale = Vector2(2, 2)
+		viewport.add_child(art)
+		add_child(viewport)
+		for i in 4:
+			await RenderingServer.frame_post_draw
+		var img := viewport.get_texture().get_image()
+		img.convert(Image.FORMAT_RGB8)
+		for half in 2:
+			img.save_png("%s/%s.%dx%d.png" % [folder, spec[0], img.get_width(), img.get_height()])
+			img.resize(img.get_width() / 2, img.get_height() / 2, Image.INTERPOLATE_LANCZOS)
+		viewport.queue_free()
+	get_tree().quit()
+
+
+## Four aces fanned out around `pivot`.
+func _draw_fan(cards: Array, pivot: Vector2, radius: float, zoom: float, spread: float) -> void:
+	for i in cards.size():
+		var a := (i - (cards.size() - 1) / 2.0) * spread
+		_draw_card(cards[i], pivot + Vector2(0, -radius).rotated(a), a, zoom, 1.0)
+
+
+func _draw_twinkles(center: Vector2, spread: Vector2, size: float) -> void:
+	for i in 9:
+		var p := center + Vector2(sin(i * 2.4) * spread.x, cos(i * 1.7) * spread.y)
+		var k := 0.4 + 0.6 * absf(sin(i * 1.9))
+		_star(p, size * k, Color(GOLD_LIGHT, k))
+
+
+func _draw_art() -> void:
+	match art_kind:
+		"box":
+			_draw_fan(TITLE_CARDS, Vector2(540, 660), 310, 2.3, 0.3)
+			_draw_twinkles(Vector2(540, 790), Vector2(450, 110), 16)
+			_draw_logo(Vector2(540, 820), 1.85)
+			_text(tr("subtitle"), Vector2(540, 972), 34, MUTED, font)
+		"poster":
+			_draw_fan(TITLE_CARDS, Vector2(360, 560), 250, 1.8, 0.3)
+			_draw_twinkles(Vector2(360, 690), Vector2(300, 90), 12)
+			_draw_logo(Vector2(360, 720), 1.3)
+			_text(tr("subtitle"), Vector2(360, 820), 24, MUTED, font)
+			_draw_fan([7, 26, 15], Vector2(360, 1230), 280, 1.45, 0.32)  # king, jack and queen
+		"hero":
+			_draw_fan(TITLE_CARDS, Vector2(600, 760), 330, 2.3, 0.3)
+			_draw_twinkles(Vector2(1320, 500), Vector2(420, 120), 16)
+			_draw_logo(Vector2(1320, 540), 1.8)
+			_text(tr("subtitle"), Vector2(1320, 690), 36, MUTED, font)
