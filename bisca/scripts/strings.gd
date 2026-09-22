@@ -6,15 +6,22 @@ const LANGUAGES := [["pt", "Português"]]
 
 const TEXT := {
 	# Title screen.
-	"subtitle": ["O clássico jogo de cartas português, a dois"],
+	"subtitle": ["O clássico jogo de cartas com trunfo"],
 	"play": ["Jogar"],
 	"continue": ["Continuar"],
 	"new_match": ["Nova partida"],
 	"rules": ["Regras"],
+	"mode_2": ["1 contra 1"],
+	"mode_4": ["2 contra 2"],
+	"back": ["Voltar ao início"],
 
 	# Players.
 	"name_0": ["Tu"],
 	"name_1": ["Zé"],
+	"name_2": ["Rita"],
+	"name_3": ["Manel"],
+	"us": ["Nós"],
+	"them": ["Eles"],
 
 	# Table.
 	"points": ["PONTOS"],
@@ -44,6 +51,10 @@ const TEXT := {
 	"draw_hand": ["Empate!"],
 	"won_match": ["Ganhaste a partida!"],
 	"lost_match": ["Perdeste a partida"],
+	"won_hand_team": ["Ganhámos a mão!"],
+	"lost_hand_team": ["Perdemos a mão"],
+	"won_match_team": ["Ganhámos a partida!"],
+	"lost_match_team": ["Perdemos a partida"],
 	"simple": ["Vitória simples"],
 	"simple_loss": ["Derrota simples"],
 	"capote": ["Capote!"],
@@ -52,6 +63,10 @@ const TEXT := {
 	"games_you_n": ["+%d jogos para ti"],
 	"games_other_1": ["+1 jogo para o %s"],
 	"games_other_n": ["+%d jogos para o %s"],
+	"games_us_1": ["+1 jogo para nós"],
+	"games_us_n": ["+%d jogos para nós"],
+	"games_them_1": ["+1 jogo para eles"],
+	"games_them_n": ["+%d jogos para eles"],
 	"draw_note": ["60 a 60: ninguém ganha jogos"],
 	"tricks_n": ["%d vazas"],
 	"next_hand": ["Próxima mão"],
@@ -78,17 +93,17 @@ const TEXT := {
 	"best_hand": ["Melhor mão (pontos)"],
 	"confirm_new": ["Carrega outra vez para recomeçar"],
 	"sure": ["Tens a certeza?"],
-	"keys_help": ["← → escolher carta · Enter jogar · T trocar o 2 · Esc menu"],
+	"keys_help": ["← → escolher carta · Enter jogar · T trocar o 2 · Esc menu · Backspace voltar"],
 
 	# Rules.
 	"rules_title": ["Regras da Bisca"],
-	"rules_1": ["Joga-se a dois, tu contra o Zé, com um baralho de 40 cartas (sem 8, 9 e 10). Cada jogador recebe 3 cartas (7 ou 9 nas outras variantes) e a carta seguinte fica virada debaixo do monte: o seu naipe é o trunfo."],
-	"rules_2": ["Começa quem não deu. Enquanto houver cartas no monte podes jogar qualquer carta: não é obrigatório assistir nem cortar."],
-	"rules_3": ["A vaza é de quem jogar o trunfo mais alto ou, se não houver trunfos, a carta mais alta do naipe que saiu. Quem ganha tira primeiro uma carta do monte, a seguir o outro, e começa a vaza seguinte."],
+	"rules_1": ["Joga-se 1 contra 1 (tu contra o Zé) ou 2 contra 2 (tu e a Rita, à tua frente, contra o Zé e o Manel), com um baralho de 40 cartas (sem 8, 9 e 10). Cada jogador recebe 3 cartas (7 ou 9 nas outras variantes) e a carta seguinte fica virada debaixo do monte: o seu naipe é o trunfo."],
+	"rules_2": ["Começa o jogador à direita de quem deu e joga-se no sentido contrário ao dos ponteiros do relógio. Enquanto houver cartas no monte podes jogar qualquer carta: não é obrigatório assistir nem cortar."],
+	"rules_3": ["A vaza é de quem jogar o trunfo mais alto ou, se não houver trunfos, a carta mais alta do naipe que saiu. Quem ganha tira primeiro uma carta do monte, a seguir os outros pela ordem de jogo, e começa a vaza seguinte."],
 	"rules_4": ["Quem tiver o 2 de trunfo pode, na sua vez, trocá-lo pelo trunfo virado enquanto houver monte. O trunfo virado é a última carta a sair do monte."],
 	"rules_5": ["Quando o monte acaba é obrigatório assistir, isto é, jogar uma carta do naipe que saiu. Quem não tem joga outra carta qualquer."],
 	"rules_6": ["Ordem das cartas: Ás, 7 (a bisca), Rei, Valete, Dama, 6, 5, 4, 3 e 2. Valem pontos o Ás (11), o 7 (10), o Rei (4), o Valete (3) e a Dama (2): 120 pontos no total."],
-	"rules_7": ["Ganha a mão quem fizer 61 pontos ou mais: 1 jogo. Com 91 ou mais é capote (2 jogos) e com os 120 pontos é bandeira (4 jogos). Com 60 a 60 ninguém ganha. Ganha a partida quem chegar primeiro aos 4 jogos."],
+	"rules_7": ["Ganha a mão o jogador ou a equipa que fizer 61 pontos ou mais: 1 jogo. Com 91 ou mais é capote (2 jogos) e com os 120 pontos é bandeira (4 jogos). Com 60 a 60 ninguém ganha. Ganha a partida quem chegar primeiro aos 4 jogos."],
 	"rules_cards": ["Nas cartas: R = Rei, V = Valete, D = Dama"],
 }
 

@@ -1,14 +1,16 @@
 extends Node2D
-## Bisca: the Portuguese trick-taking card game for two. You (bottom) play against the computer
-## (top). The deck has 40 cards (no 8, 9 or 10); each player gets 3 (7 or 9 in the other variants)
+## Bisca: the Portuguese trick-taking card game, 1 against 1 or 2 against 2. In the one-to-one game
+## you (bottom) play against the computer (top); in the team game you and your partner (top) play
+## against the players on the sides, counterclockwise: you, right, partner, left. The deck has 40 cards (no 8, 9 or 10); each player gets 3 (7 or 9 in the other variants)
 ## and the next card lies face up under the stock: its suit is trump. While the stock lasts any card
-## may be played; after each trick the winner draws first, then the other player, and the winner
-## leads. Whoever holds the 2 of trump may swap it for the face-up trump on their turn while the
+## may be played; after each trick the winner draws first, then the others in playing order, and the
+## winner leads. Whoever holds the 2 of trump may swap it for the face-up trump on their turn while the
 ## stock lasts. Once the stock is empty players must follow suit. A trick goes to the highest trump,
 ## or else to the highest card of the suit led. Cards rank A, 7, K, J, Q, 6, 5, 4, 3, 2 and are worth
 ## 11, 10, 4, 3, 2 (120 in the deck). A hand is won with 61 points: 1 game, 2 with 91 or more
-## (capote), 4 with all 120 (bandeira). The first player to 4 games wins the match.
-## Keys: Left / Right pick a card, Enter / Space play it, T swap the 2 of trump, Esc menu.
+## (capote), 4 with all 120 (bandeira). The first player or team to 4 games wins the match.
+## Keys: Left / Right pick a card, Enter / Space play it, T swap the 2 of trump, Esc menu,
+## Backspace back to the title screen.
 ## Run with "-- --render-icon" (scene res://scenes/main.tscn) to redraw icon.png, or with
 ## "-- --render-store" to redraw the Box, Poster and Hero art in store-listing/.
 
@@ -44,16 +46,17 @@ const CLUB_LOBES := [Vector3(0, -0.46, 0.35), Vector3(-0.42, 0.1, 0.35), Vector3
 const STEM := [Vector2(0, 0.1), Vector2(-0.34, 0.96), Vector2(0.34, 0.96)]
 
 const CARD := Vector2(96, 134)
-const SMALL := 0.62  # scale of the computer's cards
+const SMALL := 0.62  # scale of the computer players' cards
 
-# Seats: 0 you (bottom), 1 the computer (top).
-const TRICK_POS := [Vector2(656, 392), Vector2(624, 268)]
-const STOCK_POS := Vector2(420, 330)
+# Seats are numbered in playing order from you (0). With two players seat 1 sits at the top; with
+# four, 1 is on the right, 2 (your partner) at the top and 3 on the left. Teams are seat % 2. The
+# places below are indexed by side: 0 bottom, 1 right, 2 top, 3 left (see _side).
+const TRICK_POS := [Vector2(640, 414), Vector2(752, 330), Vector2(640, 246), Vector2(528, 330)]
+const NAME_POS := [Vector2(1150, 688), Vector2(1200, 490), Vector2(640, 126), Vector2(80, 490)]
+const FLOAT_POS := [Vector2(640, 500), Vector2(1060, 330), Vector2(640, 172), Vector2(220, 330)]
+const PILE_POS := [Vector2(884, 474), Vector2(884, 186)]  # cards each team has won
 const STOCK_ZOOM := 0.85
-const TRUMP_POS := Vector2(472, 338)  # the face-up trump, sideways under the stock
-const PILE_POS := [Vector2(872, 420), Vector2(872, 240)]  # cards each player has won
-const NAME_POS := [Vector2(1150, 688), Vector2(640, 126)]
-const FLOAT_POS := [Vector2(872, 500), Vector2(872, 160)]
+const TRUMP_OFFSET := Vector2(52, 8)  # the face-up trump lies sideways under the stock
 const HAND_Y := 638.0
 const HAND_SPACING := 64.0
 const LIFT := 30.0
@@ -67,8 +70,7 @@ const RESULT_DELAY := 0.6
 const SCORE_RECT := Rect2(16, 14, 264, 110)
 const TRUMP_RECT := Rect2(1016, 14, 186, 66)
 const MENU_BUTTON := Rect2(1216, 22, 48, 48)
-const LAST_RECT := Rect2(16, 588, 136, 118)
-const SWAP_BUTTON := Rect2(348, 426, 144, 38)
+const BACK_BUTTON := Rect2(1216, 80, 48, 48)
 const MENU_RECT := Rect2(390, 40, 500, 640)
 const RULES_RECT := Rect2(170, 84, 940, 552)
 const RESULT_RECT := Rect2(360, 128, 560, 424)
@@ -91,14 +93,15 @@ const CONFETTI := [Color("f2c94c"), Color("5cb8ff"), Color("ff6b6b"), Color("7ee
 var phase := "title"  # title, shuffle, deal, reveal, play, trick, collect, draw, round_end
 var phase_t := 0.0
 var deck := []  # the stock: the last card is on top; once turned, deck[0] is the face-up trump
-var hands := [[], []]
+var players := 4  # 2 (one against one) or 4 (two teams)
+var hands := [[], [], [], []]
 var trick := []  # {"seat", "card", "rot"} in playing order
 var last_trick := []
 var last_winner := -1  # index in last_trick
-var piles := [[], []]  # cards won by each player
+var piles := [[], []]  # cards won by each team
 var points := [0, 0]
 var tricks := [0, 0]
-var dealer := 0
+var dealer := 2
 var trump := -1
 var trump_card := -1  # the face-up card under the stock
 var hand_size := 3  # cards per player in the hand being played
@@ -109,6 +112,7 @@ var draws := 0  # cards drawn from the stock after the last trick
 var stock_note := false  # the stock just ran out: say so
 var ai_delay := 0.0
 var played := {}  # every card played this hand
+var voids := []  # voids[seat][suit]: seat showed it has no cards of that suit (once the stock is empty)
 
 # The match.
 var games := [0, 0]
@@ -116,6 +120,7 @@ var hand_number := 0
 var result := {}
 var result_shown := false
 var match_over := false
+var saved_modes := {}  # players -> {"games", "hand_number", "dealer"} of the match in the other mode
 
 # Settings and statistics.
 var sound_on := true
@@ -179,7 +184,7 @@ func _ready() -> void:
 	AudioServer.set_bus_mute(0, not sound_on)
 	for c in 40:
 		deck.append(c)
-		vis[c] = {"pos": STOCK_POS, "rot": 0.0, "zoom": STOCK_ZOOM, "face": 0.0, "z": c}
+		vis[c] = {"pos": _stock_pos(), "rot": 0.0, "zoom": STOCK_ZOOM, "face": 0.0, "z": c}
 	if art_kind != "":
 		return
 	if "--render-icon" in OS.get_cmdline_user_args():
@@ -338,9 +343,11 @@ func _beats(a: int, b: int) -> bool:
 func _trick_winner_index() -> int:
 	if trick.is_empty():
 		return -1
-	if trick.size() == 2 and _beats(trick[1].card, trick[0].card):
-		return 1
-	return 0
+	var best := 0
+	for i in range(1, trick.size()):
+		if _beats(trick[i].card, trick[best].card):
+			best = i
+	return best
 
 
 func _led() -> int:
@@ -356,6 +363,48 @@ func _legal(seat: int) -> Array:
 	var led := _led()
 	var follow := hand.filter(func(c: int) -> bool: return c / 10 == led)
 	return follow if not follow.is_empty() else hand.duplicate()
+
+
+## Where `seat` sits: 0 bottom, 1 right, 2 top, 3 left.
+func _side(seat: int) -> int:
+	return seat * 4 / players
+
+
+func _stock_pos() -> Vector2:
+	return Vector2(420, 330) if players == 2 else Vector2(380, 196)
+
+
+func _trump_pos() -> Vector2:
+	return _stock_pos() + TRUMP_OFFSET
+
+
+func _swap_button() -> Rect2:
+	var s := _stock_pos()
+	return Rect2(s.x - 72, s.y + 96, 144, 38)
+
+
+func _last_rect() -> Rect2:
+	return Rect2(16, 588, 24 + players * 52, 118)
+
+
+## "Tu" / "Zé" in the one-to-one game, "Nós" / "Eles" in the team game.
+func _team_name(team: int) -> String:
+	if players == 2:
+		return tr("name_%d" % team)
+	return tr("us" if team == 0 else "them")
+
+
+## The key of a result text, in the plural ("Ganhámos") in the team game.
+func _team_key(key: String) -> String:
+	return key + "_team" if players == 4 else key
+
+
+func _count_suit(cards: Array, suit: int) -> int:
+	var n := 0
+	for c: int in cards:
+		if c / 10 == suit:
+			n += 1
+	return n
 
 
 func _my_turn() -> bool:
@@ -395,9 +444,9 @@ func _start_hand() -> void:
 		hand_number = 0
 		match_over = false
 	hand_number += 1
-	dealer = (dealer + 1) % 2
+	dealer = (dealer + 1) % players
 	hand_size = VARIANTS[variant]
-	hands = [[], []]
+	hands = [[], [], [], []]
 	trick = []
 	last_trick = []
 	last_winner = -1
@@ -405,6 +454,9 @@ func _start_hand() -> void:
 	points = [0, 0]
 	tricks = [0, 0]
 	played = {}
+	voids = []
+	for s in 4:
+		voids.append([false, false, false, false])
 	trump = -1
 	trump_card = -1
 	stock_note = false
@@ -425,7 +477,7 @@ func _start_hand() -> void:
 	if dealer == 0:
 		_say("dealer_you")
 	else:
-		_say("dealer_other", tr("name_1"))
+		_say("dealer_other", tr("name_%d" % dealer))
 
 
 func _new_match() -> void:
@@ -435,6 +487,41 @@ func _new_match() -> void:
 	menu_open = false
 	confirm_new = false
 	_start_hand()
+
+
+## Back to the title screen. A hand cut short is dealt again, by the same dealer, next time.
+func _go_title() -> void:
+	if phase == "round_end":
+		if match_over:
+			games = [0, 0]
+			hand_number = 0
+			match_over = false
+	elif phase != "title":
+		hand_number -= 1
+		dealer = (dealer + players - 1) % players
+	phase = "title"
+	phase_t = 0.0
+	hands = [[], [], [], []]
+	trick = []
+	message = ""
+	menu_open = false
+	confirm_new = false
+	kb_index = -1
+	_save()
+
+
+## Switches between the one-to-one and the team game; each keeps its own match.
+func _set_mode(n: int) -> void:
+	if n == players:
+		return
+	saved_modes[players] = {"games": games, "hand_number": hand_number, "dealer": dealer}
+	players = n
+	var m: Dictionary = saved_modes.get(n, {})
+	games = m.get("games", [0, 0])
+	hand_number = m.get("hand_number", 0)
+	dealer = m.get("dealer", players - 2)
+	confirm_new = false
+	_save()
 
 
 func _step(dt: float) -> void:
@@ -447,18 +534,18 @@ func _step(dt: float) -> void:
 				deal_i = 0
 		"deal":
 			deal_t += dt
-			while deal_t >= DEAL_GAP and deal_i < hand_size * 2:
+			while deal_t >= DEAL_GAP and deal_i < hand_size * players:
 				deal_t -= DEAL_GAP
 				_deal_one()
-			if deal_i == hand_size * 2 and deal_t >= DEAL_GAP:
+			if deal_i == hand_size * players and deal_t >= DEAL_GAP:
 				_reveal()
 		"reveal":
 			if phase_t >= 1.7:
-				turn = (dealer + 1) % 2
+				turn = (dealer + 1) % players
 				_begin_turn()
 		"play":
 			if turn != 0 and phase_t >= ai_delay:
-				_ai_turn()
+				_ai_turn(turn)
 		"trick":
 			if phase_t >= 1.05:
 				_collect()
@@ -474,10 +561,10 @@ func _step(dt: float) -> void:
 					_begin_turn()
 		"draw":
 			# The winner of the trick (whose turn it is) draws first.
-			while draws < 2 and phase_t >= draws * DRAW_GAP:
-				_take_from_stock((turn + draws) % 2)
+			while draws < players and phase_t >= draws * DRAW_GAP:
+				_take_from_stock((turn + draws) % players)
 				draws += 1
-			if phase_t >= DRAW_GAP + 0.4:
+			if phase_t >= (players - 1) * DRAW_GAP + 0.4:
 				_begin_turn()
 		"round_end":
 			if not result_shown and phase_t >= RESULT_DELAY:
@@ -488,7 +575,7 @@ func _step(dt: float) -> void:
 ## Deals the top card of the stock, one at a time, starting with the player who did not deal.
 func _deal_one() -> void:
 	var card: int = deck.pop_back()
-	var seat := (dealer + 1 + deal_i) % 2
+	var seat := (dealer + 1 + deal_i) % players
 	deal_i += 1
 	hands[seat].append(card)
 	if seat == 0:
@@ -505,7 +592,7 @@ func _reveal() -> void:
 	phase = "reveal"
 	phase_t = 0.0
 	sfx.play("reveal")
-	_burst(TRUMP_POS, 26, GOLD)
+	_burst(_trump_pos(), 26, GOLD)
 
 
 func _take_from_stock(seat: int) -> void:
@@ -546,9 +633,9 @@ func _swap(seat: int) -> void:
 		_sort_hand()
 		_say("swapped_you")
 	else:
-		_say("swapped_other", tr("name_1"))
+		_say("swapped_other", tr("name_%d" % seat))
 	sfx.play("reveal")
-	_burst(TRUMP_POS, 18, GOLD)
+	_burst(_trump_pos(), 18, GOLD)
 
 
 func _try_play(card: int) -> void:
@@ -564,34 +651,38 @@ func _play(seat: int, card: int) -> void:
 	var led := _led()
 	hands[seat].erase(card)
 	played[card] = true
+	if led >= 0 and card / 10 != led and deck.is_empty():
+		voids[seat][led] = true
 	trick.append({"seat": seat, "card": card, "rot": rng.randf_range(-0.13, 0.13)})
-	if led >= 0 and led != trump and card / 10 == trump:
+	if led >= 0 and led != trump and card / 10 == trump and _trick_winner_index() == trick.size() - 1:
+		var at: Vector2 = TRICK_POS[_side(seat)]
 		sfx.play("trump")
-		_burst(TRICK_POS[seat], 24, GOLD)
-		_float(tr("cut"), TRICK_POS[seat] + Vector2(0, -80), GOLD_LIGHT, 30)
+		_burst(at, 24, GOLD)
+		_float(tr("cut"), at + Vector2(0, -80), GOLD_LIGHT, 30)
 	else:
 		sfx.play("play", rng.randf_range(0.9, 1.1))
 	if seat == 0:
 		message = ""
 		if kb_index >= 0:
 			kb_index = mini(kb_index, hands[0].size() - 1)
-	if trick.size() == 2:
+	if trick.size() == players:
 		phase = "trick"
 		phase_t = 0.0
 	else:
-		turn = 1 - seat
+		turn = (seat + 1) % players
 		_begin_turn()
 
 
 func _collect() -> void:
 	var wi := _trick_winner_index()
 	var winner: int = trick[wi].seat
+	var team := winner % 2
 	var pts := 0
 	for e in trick:
 		pts += _points(e.card)
-		piles[winner].append(e.card)
-	points[winner] += pts
-	tricks[winner] += 1
+		piles[team].append(e.card)
+	points[team] += pts
+	tricks[team] += 1
 	last_trick = trick.duplicate()
 	last_winner = wi
 	trick = []
@@ -600,12 +691,13 @@ func _collect() -> void:
 	phase_t = 0.0
 	sfx.play("collect")
 	if pts > 0:
-		var col := US if winner == 0 else THEM
-		sfx.play("trick_us" if winner == 0 else "trick_them")
-		_float("+%d" % pts, FLOAT_POS[winner], col, 26 + mini(pts, 30) / 2)
-		score_pulse[winner] = 1.0
+		var col := US if team == 0 else THEM
+		var at: Vector2 = FLOAT_POS[_side(winner)]
+		sfx.play("trick_us" if team == 0 else "trick_them")
+		_float("+%d" % pts, at, col, 26 + mini(pts, 30) / 2)
+		score_pulse[team] = 1.0
 		if pts >= 20:
-			_burst(FLOAT_POS[winner], 16, col)
+			_burst(at, 16, col)
 
 
 func _end_hand() -> void:
@@ -669,7 +761,7 @@ func _say(key: String, arg := "") -> void:
 # --- Computer player -------------------------------------------------------------------------
 
 ## Cards `seat` has not seen: not played, not in its own hand and not the face-up trump. Once the
-## stock is empty these are exactly the other player's hand.
+## stock is empty these are exactly the other players' hands.
 func _unseen(seat: int) -> Array:
 	var out := []
 	for c in 40:
@@ -678,25 +770,29 @@ func _unseen(seat: int) -> Array:
 	return out
 
 
-func _ai_turn() -> void:
-	if _can_swap(1):
-		_swap(1)
+func _ai_turn(seat: int) -> void:
+	if _can_swap(seat):
+		_swap(seat)
 		ai_delay = phase_t + 0.9  # give you time to see the swap
 		return
-	_play(1, _ai_choose(1))
+	_play(seat, _ai_choose(seat))
 
 
 func _ai_choose(seat: int) -> int:
 	var legal := _legal(seat)
 	if legal.size() == 1:
 		return legal[0]
-	if deck.is_empty() and hands[seat].size() <= 5:
+	if players == 2 and deck.is_empty() and hands[seat].size() <= 5:
 		return _solve(seat, legal)
 	var unseen := _unseen(seat)
 	var best: int = legal[0]
 	var best_score := -INF
 	for c: int in legal:
-		var score := _lead_score(c, unseen) if trick.is_empty() else _follow_score(c)
+		var score := 0.0
+		if players == 4:
+			score = _team_lead_score(seat, c, unseen) if trick.is_empty() else _team_follow_score(seat, c, unseen)
+		else:
+			score = _lead_score(c, unseen) if trick.is_empty() else _follow_score(c)
 		score += rng.randf() * 0.4
 		if score > best_score:
 			best_score = score
@@ -742,6 +838,94 @@ func _follow_score(c: int) -> float:
 			spend *= 0.5
 	var won := pts if _beats(c, lead) else -pts
 	return won - spend - rank * 0.1
+
+
+## Whether an opponent of `seat` still to play in this trick could beat `card`, as far as `seat`
+## can tell. While the stock lasts anyone may cut; after that players must follow suit, and the
+## suits they have run out of are known.
+func _may_be_beaten(seat: int, card: int, led: int, unseen: Array) -> bool:
+	var done := []
+	for e in trick:
+		done.append(e.seat)
+	for s in players:
+		if s % 2 == seat % 2 or s in done:
+			continue
+		for u: int in unseen:
+			if not _beats(u, card):
+				continue
+			if not deck.is_empty():
+				return true
+			if u / 10 == led:
+				if not voids[s][led]:
+					return true
+			elif not voids[s][trump] and (voids[s][led] or _count_suit(unseen, led) <= 2):
+				return true
+	return false
+
+
+## Team game: how good `c` is as the first card of a trick.
+func _team_lead_score(seat: int, c: int, unseen: Array) -> float:
+	var suit := c / 10
+	var rank := c % 10
+	var pts := _points(c)
+	var safe := not _may_be_beaten(seat, c, suit, unseen)
+	if not deck.is_empty():
+		# While the stock lasts lead cheap cards and keep trumps and points.
+		var score := -pts * 1.2 - rank * 0.15
+		if suit == trump:
+			score -= 5.0 + rank * 0.5 + pts
+		return score
+	var partner := (seat + 2) % 4
+	var foes := [(seat + 1) % 4, (seat + 3) % 4]
+	if suit == trump:
+		# Draw the opponents' trumps when strong in them.
+		var left := _count_suit(unseen, trump)
+		var trump_score := -6.0 + _count_suit(hands[seat], trump) * 2.5 - left * 1.2
+		if safe:
+			trump_score += 5.0 + pts * 0.3
+		else:
+			trump_score -= pts * 1.5 + rank * 0.2
+		if left == 0:
+			trump_score -= 6.0
+		return trump_score
+	var score := 0.0
+	if safe:
+		score = 9.0 + pts  # a sure trick: cash it
+	else:
+		score = 3.0 - pts * 1.4 - rank * 0.3  # otherwise lead low
+		var foes_follow: bool = not voids[foes[0]][suit] and not voids[foes[1]][suit]
+		if voids[partner][suit] and not voids[partner][trump] and foes_follow:
+			score += 6.0  # the partner can cut it
+	for f: int in foes:
+		if voids[f][suit] and not voids[f][trump]:
+			score -= 5.0 + pts
+	return score
+
+
+## Team game: how good `c` is when following, roughly the points it swings to our team minus the
+## cost of spending a trump or a card that would win a trick later.
+func _team_follow_score(seat: int, c: int, unseen: Array) -> float:
+	var led := _led()
+	var wi := _trick_winner_index()
+	var best_card: int = trick[wi].card
+	var partner_winning: bool = trick[wi].seat % 2 == seat % 2
+	var last := trick.size() == players - 1
+	var on_table := 0
+	for e in trick:
+		on_table += _points(e.card)
+	var pts := _points(c)
+	var rank := c % 10
+	var spend := 0.0
+	if c / 10 == trump and led != trump:
+		spend = 2.0 + rank * 0.6 + pts * 0.8
+	elif c / 10 == trump:
+		spend = rank * 0.3 + pts * 0.3
+	var take := 0.0  # our chance of taking the trick
+	if _beats(c, best_card):
+		take = 1.0 if last or not _may_be_beaten(seat, c, led, unseen) else 0.45
+	elif partner_winning:
+		take = 1.0 if last or not _may_be_beaten(seat, best_card, led, unseen) else 0.45
+	return (2.0 * take - 1.0) * (on_table + pts + 3) - spend - rank * 0.03
 
 
 ## Plays the endgame perfectly: once the stock is empty every card is known, so with small hands
@@ -820,9 +1004,9 @@ func _targets() -> Dictionary:
 	var out := {}
 	for i in deck.size():
 		if i == 0 and trump >= 0:
-			out[deck[0]] = [TRUMP_POS, PI / 2, STOCK_ZOOM, true, 1]
+			out[deck[0]] = [_trump_pos(), PI / 2, STOCK_ZOOM, true, 1]
 			continue
-		var pos: Vector2 = STOCK_POS + Vector2(-i * 0.22, -i * 0.3)
+		var pos: Vector2 = _stock_pos() + Vector2(-i * 0.22, -i * 0.3)
 		var rot := 0.0
 		if phase == "shuffle":
 			var side := 1.0 if i % 2 == 0 else -1.0
@@ -831,28 +1015,33 @@ func _targets() -> Dictionary:
 			rot = side * split * 0.004
 		out[deck[i]] = [pos, rot, STOCK_ZOOM, false, 10 + i]
 	var selected := _selected()
-	for seat in 2:
+	for seat in players:
 		var cards: Array = hands[seat]
 		var mid := (cards.size() - 1) / 2.0
 		for i in cards.size():
 			var off := i - mid
-			if seat == 0:
-				var pos := Vector2(640 + off * HAND_SPACING, HAND_Y + off * off * 1.4)
-				if cards[i] == selected:
-					pos += Vector2(0, -(LIFT if cards[i] in legal_now else 10.0)).rotated(off * 0.03)
-				out[cards[i]] = [pos, off * 0.03, 1.0, true, 300 + i]
-			else:
-				out[cards[i]] = [Vector2(640 - off * 30, 58), PI, SMALL, false, 100 + i]
+			match _side(seat):
+				0:
+					var pos := Vector2(640 + off * HAND_SPACING, HAND_Y + off * off * 1.4)
+					if cards[i] == selected:
+						pos += Vector2(0, -(LIFT if cards[i] in legal_now else 10.0)).rotated(off * 0.03)
+					out[cards[i]] = [pos, off * 0.03, 1.0, true, 300 + i]
+				1:
+					out[cards[i]] = [Vector2(1200, 330 + off * 24), -PI / 2, SMALL, false, 100 + i]
+				2:
+					out[cards[i]] = [Vector2(640 - off * 30, 58), PI, SMALL, false, 100 + i]
+				3:
+					out[cards[i]] = [Vector2(80, 330 - off * 24), PI / 2, SMALL, false, 100 + i]
 	var wi := _trick_winner_index()
 	for i in trick.size():
 		var e: Dictionary = trick[i]
 		var zoom := 1.08 if phase == "trick" and i == wi else 1.0
-		out[e.card] = [TRICK_POS[e.seat], e.rot, zoom, true, 200 + i]
-	for seat in 2:
-		var pile: Array = piles[seat]
+		out[e.card] = [TRICK_POS[_side(e.seat)], e.rot, zoom, true, 200 + i]
+	for team in 2:
+		var pile: Array = piles[team]
 		for i in pile.size():
 			var c: int = pile[i]
-			out[c] = [PILE_POS[seat] + Vector2(-i * 0.15, -i * 0.25), (c % 7 - 3) * 0.035, 0.7, false, 50 + i]
+			out[c] = [PILE_POS[team] + Vector2(-i * 0.15, -i * 0.25), (c % 7 - 3) * 0.035, 0.7, false, 50 + i]
 	return out
 
 
@@ -951,6 +1140,9 @@ func _key(code: int) -> void:
 	if menu_open:
 		return
 	match code:
+		KEY_BACKSPACE:
+			if phase != "title":
+				_press("back")
 		KEY_LEFT, KEY_RIGHT:
 			var n: int = hands[0].size()
 			if n == 0 or phase == "title":
@@ -988,19 +1180,23 @@ func _buttons() -> Dictionary:
 		return out
 	out["menu"] = MENU_BUTTON
 	if phase == "title":
-		out["play"] = Rect2(540, 566, 200, 58)
+		out["mode_2"] = Rect2(500, 518, 140, 40)
+		out["mode_4"] = Rect2(640, 518, 140, 40)
+		out["play"] = Rect2(540, 574, 200, 56)
 		if _in_progress():
-			out["rules"] = Rect2(412, 640, 220, 40)
-			out["new_match"] = Rect2(648, 640, 220, 40)
+			out["rules"] = Rect2(412, 644, 220, 38)
+			out["new_match"] = Rect2(648, 644, 220, 38)
 		else:
-			out["rules"] = Rect2(530, 640, 220, 40)
-	elif phase == "round_end" and phase_t >= RESULT_DELAY:
+			out["rules"] = Rect2(530, 644, 220, 38)
+		return out
+	out["back"] = BACK_BUTTON
+	if phase == "round_end" and phase_t >= RESULT_DELAY:
 		out["next"] = Rect2(RESULT_RECT.get_center().x - 115, RESULT_RECT.end.y - 76, 230, 54)
 	elif _can_swap(0):
-		out["swap"] = SWAP_BUTTON
+		out["swap"] = _swap_button()
 		# The face-up trump itself can be clicked too.
 		var size := Vector2(CARD.y, CARD.x) * STOCK_ZOOM
-		out["swap_card"] = Rect2(TRUMP_POS - size / 2.0, size)
+		out["swap_card"] = Rect2(_trump_pos() - size / 2.0, size)
 	return out
 
 
@@ -1066,6 +1262,12 @@ func _press(button: String) -> void:
 				confirm_new = true
 		"swap", "swap_card":
 			_swap(0)
+		"back":
+			_go_title()
+		"mode_2":
+			_set_mode(2)
+		"mode_4":
+			_set_mode(4)
 
 
 func _toggle_menu() -> void:
@@ -1124,9 +1326,14 @@ func _save() -> void:
 	# A hand cut short is dealt again, by the same dealer, when the game starts next time.
 	var between := phase in ["title", "round_end"]
 	var config := ConfigFile.new()
-	config.set_value("match", "games", [0, 0] if match_over else games)
-	config.set_value("match", "hand_number", 0 if match_over else (hand_number if between else hand_number - 1))
-	config.set_value("match", "dealer", dealer if between else (dealer + 1) % 2)
+	var modes := saved_modes.duplicate()
+	modes[players] = {
+		"games": [0, 0] if match_over else games,
+		"hand_number": 0 if match_over else (hand_number if between else hand_number - 1),
+		"dealer": dealer if between else (dealer + players - 1) % players,
+	}
+	config.set_value("match", "players", players)
+	config.set_value("match", "modes", modes)
 	config.set_value("match", "stats", stats)
 	config.set_value("settings", "sound", sound_on)
 	config.set_value("settings", "fast", fast)
@@ -1138,11 +1345,22 @@ func _load() -> void:
 	var config := ConfigFile.new()
 	if config.load(SAVE_PATH) != OK:
 		return
-	var saved_games: Array = config.get_value("match", "games", [0, 0])
-	if saved_games.size() == 2 and maxi(saved_games[0], saved_games[1]) < GAMES_TO_WIN:
-		games = [int(saved_games[0]), int(saved_games[1])]
-	hand_number = int(config.get_value("match", "hand_number", 0))
-	dealer = int(config.get_value("match", "dealer", dealer)) % 2
+	var modes: Dictionary = config.get_value("match", "modes", {})
+	for n in [2, 4]:
+		var m: Dictionary = modes.get(n, {})
+		var saved_games: Array = m.get("games", [0, 0])
+		if saved_games.size() != 2 or maxi(saved_games[0], saved_games[1]) >= GAMES_TO_WIN:
+			saved_games = [0, 0]
+		saved_modes[n] = {
+			"games": [int(saved_games[0]), int(saved_games[1])],
+			"hand_number": int(m.get("hand_number", 0)),
+			"dealer": int(m.get("dealer", n - 2)) % n,
+		}
+	players = 2 if int(config.get_value("match", "players", 4)) == 2 else 4
+	games = saved_modes[players].games
+	hand_number = saved_modes[players].hand_number
+	dealer = saved_modes[players].dealer
+	saved_modes.erase(players)
 	var saved: Dictionary = config.get_value("match", "stats", {})
 	for key in stats:
 		stats[key] = int(saved.get(key, stats[key]))
@@ -1430,9 +1648,9 @@ func _draw_table() -> void:
 		draw_polyline(points, ring[1], ring[2], true)
 	_text("Bisca", Vector2(640, 330), 64, Color(1, 1, 1, 0.045), serif)
 	# Where the stock and the won cards lie.
-	_box(Rect2(STOCK_POS - CARD * STOCK_ZOOM / 2.0, CARD * STOCK_ZOOM).grow(6), Color(0, 0, 0, 0.08), Color(GOLD, 0.12), 10, 1.0)
-	for seat in 2:
-		_box(Rect2(PILE_POS[seat] - CARD * 0.35, CARD * 0.7).grow(6), Color(0, 0, 0, 0.08), Color(US if seat == 0 else THEM, 0.14), 10, 1.0)
+	_box(Rect2(_stock_pos() - CARD * STOCK_ZOOM / 2.0, CARD * STOCK_ZOOM).grow(6), Color(0, 0, 0, 0.08), Color(GOLD, 0.12), 10, 1.0)
+	for team in 2:
+		_box(Rect2(PILE_POS[team] - CARD * 0.35, CARD * 0.7).grow(6), Color(0, 0, 0, 0.08), Color(US if team == 0 else THEM, 0.14), 10, 1.0)
 
 
 func _draw_cards() -> void:
@@ -1468,10 +1686,10 @@ func _draw_cards() -> void:
 
 
 func _draw_nameplates() -> void:
-	for seat in 2:
-		var center: Vector2 = NAME_POS[seat]
+	for seat in players:
+		var center: Vector2 = NAME_POS[_side(seat)]
 		var rect := Rect2(center - Vector2(58, 15), Vector2(128, 30))
-		var col := US if seat == 0 else THEM
+		var col := US if seat % 2 == 0 else THEM
 		var active := phase == "play" and turn == seat
 		if active:
 			var pulse := 0.5 + 0.5 * sin(clock * 5.0)
@@ -1502,16 +1720,16 @@ func _draw_hud() -> void:
 	_text(tr("points"), Vector2(x + 166, y + 18), 11, MUTED, bold)
 	_text(tr("games"), Vector2(x + 228, y + 18), 11, MUTED, bold)
 	draw_line(Vector2(x + 12, y + 69), Vector2(SCORE_RECT.end.x - 12, y + 69), Color(1, 1, 1, 0.08), 1.0)
-	for seat in 2:
-		var ry := y + 50 + seat * 38
-		var col := US if seat == 0 else THEM
+	for team in 2:
+		var ry := y + 50 + team * 38
+		var col := US if team == 0 else THEM
 		draw_circle(Vector2(x + 22, ry), 6, col, true, -1.0, true)
-		_text_left(tr("name_%d" % seat), Vector2(x + 36, ry), 18, INK, bold)
-		var pulse: float = score_pulse[seat]
-		_text(str(points[seat]), Vector2(x + 166, ry), int(22 + 9 * pulse), col.lerp(Color.WHITE, pulse * 0.6), bold)
+		_text_left(_team_name(team), Vector2(x + 36, ry), 18, INK, bold)
+		var pulse: float = score_pulse[team]
+		_text(str(points[team]), Vector2(x + 166, ry), int(22 + 9 * pulse), col.lerp(Color.WHITE, pulse * 0.6), bold)
 		for g in GAMES_TO_WIN:
 			var p := Vector2(x + 204 + g * 16, ry)
-			if g < games[seat]:
+			if g < games[team]:
 				draw_circle(p, 6, GOLD, true, -1.0, true)
 				draw_circle(p + Vector2(-1.5, -1.5), 2, GOLD_LIGHT, true, -1.0, true)
 			else:
@@ -1529,18 +1747,20 @@ func _draw_hud() -> void:
 	else:
 		_text_left("—", Vector2(x + 30, y + 42), 22, MUTED, serif)
 	_draw_gear(MENU_BUTTON.get_center(), hover_button == "menu")
+	_draw_back(BACK_BUTTON.get_center(), hover_button == "back")
 	# Cards left in the stock, and the swap button.
 	if trump >= 0 and not deck.is_empty() and phase != "shuffle":
-		_text(tr("stock_n") % deck.size(), Vector2(STOCK_POS.x, 408), 13, MUTED, bold)
+		_text(tr("stock_n") % deck.size(), _stock_pos() + Vector2(0, 78), 13, MUTED, bold)
 	var swap: Rect2 = _buttons().get("swap", Rect2())
 	if swap.has_area():
 		_button(swap, tr("swap"), false, hover_button in ["swap", "swap_card"])
 	# The last trick, small, with its winning card lit.
 	if not last_trick.is_empty():
-		_box(LAST_RECT, PANEL, Color(GOLD, 0.3), 12, 1.0, 8)
-		_text_left(tr("last_trick"), Vector2(LAST_RECT.position.x + 14, LAST_RECT.position.y + 16), 12, MUTED, bold)
+		var last := _last_rect()
+		_box(last, PANEL, Color(GOLD, 0.3), 12, 1.0, 8)
+		_text_left(tr("last_trick"), Vector2(last.position.x + 14, last.position.y + 16), 12, MUTED, bold)
 		for i in last_trick.size():
-			var p := LAST_RECT.position + Vector2(40 + i * 56, 72)
+			var p := last.position + Vector2(38 + i * 52, 72)
 			_draw_card(last_trick[i].card, p, 0.0, 0.42, 1.0, false, 0.8 if i == last_winner else 0.0)
 
 
@@ -1553,6 +1773,16 @@ func _draw_gear(center: Vector2, hot: bool) -> void:
 		points.append(center + Vector2.from_angle(a) * (13.0 if tooth else 10.0))
 	draw_colored_polygon(points, GOLD_LIGHT if hot else GOLD)
 	draw_circle(center, 5, Color(0.02, 0.1, 0.06), true, -1.0, true)
+
+
+## A round button with an arrow pointing left: back to the title screen.
+func _draw_back(center: Vector2, hot: bool) -> void:
+	draw_circle(center, 22, Color(0, 0, 0, 0.35 if hot else 0.22), true, -1.0, true)
+	var col := GOLD_LIGHT if hot else GOLD
+	draw_line(center + Vector2(-8, 0), center + Vector2(11, 0), col, 3.5, true)
+	draw_colored_polygon(PackedVector2Array([center + Vector2(-13, 0), center + Vector2(-3, -9), center + Vector2(-3, 9)]), col)
+	if hot:
+		_text_right(tr("back"), Vector2(BACK_BUTTON.position.x - 10, center.y), 14, GOLD_LIGHT, bold)
 
 
 func _draw_message() -> void:
@@ -1610,21 +1840,32 @@ func _draw_effects(confetti: bool) -> void:
 
 func _draw_title() -> void:
 	# The four sevens, the biscas, fanned out above the logo.
-	var pivot := Vector2(640, 440)
+	var pivot := Vector2(640, 412)
 	for i in 4:
 		var a := (i - 1.5) * 0.3 + sin(clock * 0.9 + i) * 0.025
 		_draw_card(TITLE_CARDS[i], pivot + Vector2(0, -186).rotated(a), a, 1.22, 1.0)
-	_draw_logo(Vector2(640, 450), 1.0)
+	_draw_logo(Vector2(640, 414), 1.0)
 	# Twinkles around the logo.
 	for i in 8:
-		var p := Vector2(640 + sin(i * 2.4) * 290, 450 + cos(i * 1.7) * 60)
+		var p := Vector2(640 + sin(i * 2.4) * 290, 414 + cos(i * 1.7) * 60)
 		var k := sin(clock * 2.2 + i * 1.3)
 		if k > 0.0:
 			_star(p, 9.0 * k, Color(GOLD_LIGHT, k))
-	_text(tr("subtitle"), Vector2(640, 536), 18, MUTED, font)
+	_text(tr("subtitle"), Vector2(640, 492), 18, MUTED, font)
 	var buttons := _buttons()
+	if buttons.has("mode_2"):
+		# One against one, or two against two: a switch with two halves.
+		_box(Rect2(buttons.mode_2.position, Vector2(280, 40)), Color(0, 0, 0, 0.25), Color(GOLD, 0.45), 20, 1.5)
+		for n in [2, 4]:
+			var key := "mode_%d" % n
+			var rect: Rect2 = buttons[key]
+			if n == players:
+				_box(rect.grow(-3), GOLD, Color(0, 0, 0, 0), 17, 0.0)
+			elif hover_button == key:
+				_box(rect.grow(-3), Color(1, 1, 1, 0.1), Color(0, 0, 0, 0), 17, 0.0)
+			_text(tr(key), rect.get_center(), 16, Color("2a1606") if n == players else INK, bold)
 	for key: String in buttons:
-		if key == "menu":
+		if key == "menu" or key.begins_with("mode_"):
 			continue
 		var label := tr(key)
 		if key == "play" and _in_progress():
@@ -1633,7 +1874,7 @@ func _draw_title() -> void:
 			label = tr("sure")
 		_button(buttons[key], label, key == "play", hover_button == key)
 	if _in_progress():
-		_text("%s %d  ·  %s %d" % [tr("name_0"), games[0], tr("name_1"), games[1]], Vector2(640, 700), 13, MUTED, bold)
+		_text("%s %d  ·  %s %d" % [_team_name(0), games[0], _team_name(1), games[1]], Vector2(640, 703), 13, MUTED, bold)
 	_draw_gear(MENU_BUTTON.get_center(), hover_button == "menu")
 
 
@@ -1653,10 +1894,10 @@ func _draw_result() -> void:
 	var title := "draw_hand"
 	var title_color := INK
 	if winner == 0:
-		title = "won_match" if match_over else "won_hand"
+		title = _team_key("won_match" if match_over else "won_hand")
 		title_color = GOLD_LIGHT
 	elif winner == 1:
-		title = "lost_match" if match_over else "lost_hand"
+		title = _team_key("lost_match" if match_over else "lost_hand")
 		title_color = Color("ffb4a8")
 	_text(tr(title), Vector2(0, -150), 38, title_color, serif, true)
 	if winner >= 0:
@@ -1667,28 +1908,31 @@ func _draw_result() -> void:
 	else:
 		_text(tr("draw_note"), Vector2(0, -104), 18, MUTED, font)
 	# Points.
-	_text(tr("name_0"), Vector2(-180, -34), 18, US, bold)
+	_text(_team_name(0), Vector2(-180, -34), 18, US, bold)
 	_text(str(points[0]), Vector2(-80, -34), 58, US, serif, true)
 	_text("–", Vector2(0, -34), 40, MUTED, serif)
 	_text(str(points[1]), Vector2(80, -34), 58, THEM, serif, true)
-	_text(tr("name_1"), Vector2(180, -34), 18, THEM, bold)
+	_text(_team_name(1), Vector2(180, -34), 18, THEM, bold)
 	_text(tr("tricks_n") % tricks[0], Vector2(-80, 14), 13, MUTED, font)
 	_text(tr("tricks_n") % tricks[1], Vector2(80, 14), 13, MUTED, font)
 	if winner >= 0:
 		var gained: int = result.gained
 		var line := ""
-		if winner == 0:
+		if players == 4:
+			var key := ("games_us_" if winner == 0 else "games_them_") + ("1" if gained == 1 else "n")
+			line = tr(key) % gained if gained > 1 else tr(key)
+		elif winner == 0:
 			line = tr("games_you_n") % gained if gained > 1 else tr("games_you_1")
 		else:
 			line = tr("games_other_n") % [gained, tr("name_1")] if gained > 1 else tr("games_other_1") % tr("name_1")
 		_text(line, Vector2(0, 52), 20, GOLD_LIGHT, bold)
 	# Games so far.
-	for seat in 2:
-		var x := -150.0 if seat == 0 else 30.0
-		_text_left(tr("name_%d" % seat), Vector2(x, 92), 14, US if seat == 0 else THEM, bold)
+	for team in 2:
+		var x := -150.0 if team == 0 else 30.0
+		_text_left(_team_name(team), Vector2(x, 92), 14, US if team == 0 else THEM, bold)
 		for g in GAMES_TO_WIN:
 			var p := Vector2(x + 62 + g * 18, 92)
-			if g < games[seat]:
+			if g < games[team]:
 				draw_circle(p, 6.5, GOLD, true, -1.0, true)
 			else:
 				draw_arc(p, 6, 0, TAU, 24, Color(GOLD, 0.45), 1.5, true)
