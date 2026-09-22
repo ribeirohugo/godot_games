@@ -10,8 +10,8 @@ const AnimalScript := preload("res://scripts/animal.gd")
 const TilePreviewScript := preload("res://scripts/tile_preview.gd")
 const IconWidgetScript := preload("res://scripts/icon_widget.gd")
 const SfxScript := preload("res://scripts/sfx.gd")
+const StoreArtScript := preload("res://scripts/store_art.gd")
 
-const GAME_TITLE := "Animal Labyrinth"  # not localized, like this developer's other games
 const START_CELL := Vector2i(-1, 1)  # start block left of the top-left slot's middle row
 const STEP_TIME := 0.16
 const START_DELAY := 0.5
@@ -95,13 +95,16 @@ var game_bar: Control
 var overlay_settings_button: Button
 var settings_overlay: Control
 var overlay_box: Control
-var language_row: HBoxContainer
+var language_row: GridContainer
 var sound_button: Button
 
 
 func _ready() -> void:
 	randomize()
 	StringsScript.install()
+	if "--render-store" in OS.get_cmdline_user_args():
+		_render_store()
+		return
 	_load_save()
 	if language == "":
 		language = StringsScript.system_language()
@@ -394,6 +397,39 @@ func _float_text(text: String, at: Vector2, color: Color) -> void:
 	tw.tween_callback(label.queue_free)
 
 
+# --- Store art ---------------------------------------------------------------
+
+## Renders the Store display images and quits: English into store-listing/, every other language
+## into store-listing/<code>/, each at full and half size. Run: play the game with "-- --render-store".
+func _render_store() -> void:
+	for entry in StringsScript.LANGUAGES:
+		var code: String = entry[0]
+		TranslationServer.set_locale(code)
+		var folder := ProjectSettings.globalize_path("res://store-listing" + ("" if code == "en" else "/" + code))
+		DirAccess.make_dir_recursive_absolute(folder)
+		for spec in [["BoxArt", Vector2(1080, 1080), "box"], ["PosterArt", Vector2(720, 1080), "poster"],
+				["HeroArt", Vector2(1920, 1080), "hero"]]:
+			var viewport := SubViewport.new()
+			viewport.size = Vector2i(spec[1] * 2.0)
+			viewport.msaa_2d = Viewport.MSAA_4X
+			viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+			var art: Node2D = StoreArtScript.new()
+			art.kind = spec[2]
+			art.art_size = spec[1]
+			art.scale = Vector2(2, 2)
+			viewport.add_child(art)
+			add_child(viewport)
+			for i in 4:
+				await RenderingServer.frame_post_draw
+			var img := viewport.get_texture().get_image()
+			img.convert(Image.FORMAT_RGB8)
+			for half in 2:
+				img.save_png("%s/%s.%dx%d.png" % [folder, spec[0], img.get_width(), img.get_height()])
+				img.resize(img.get_width() / 2, img.get_height() / 2, Image.INTERPOLATE_LANCZOS)
+			viewport.queue_free()
+	get_tree().quit()
+
+
 # --- HUD ----------------------------------------------------------------------
 
 func _build_hud() -> void:
@@ -562,9 +598,10 @@ func _build_settings_overlay(root: Control) -> void:
 	vbox.add_child(_label("settings", 28, Color(1, 0.9, 0.4)))
 
 	vbox.add_child(_label("language", 15, Color(0.75, 0.88, 1.0)))
-	language_row = HBoxContainer.new()
-	language_row.alignment = BoxContainer.ALIGNMENT_CENTER
-	language_row.add_theme_constant_override("separation", 8)
+	language_row = GridContainer.new()  # two rows of four, so eight languages fit
+	language_row.columns = 4
+	language_row.add_theme_constant_override("h_separation", 8)
+	language_row.add_theme_constant_override("v_separation", 8)
 	var lang_group := ButtonGroup.new()
 	for entry in StringsScript.LANGUAGES:
 		var code: String = entry[0]
@@ -575,6 +612,7 @@ func _build_settings_overlay(root: Control) -> void:
 		lang_button.button_pressed = code == language
 		lang_button.focus_mode = Control.FOCUS_NONE
 		lang_button.custom_minimum_size = Vector2(0, 40)
+		lang_button.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 		lang_button.set_meta("code", code)
 		lang_button.pressed.connect(_choose_language.bind(code))
 		language_row.add_child(lang_button)
@@ -653,7 +691,7 @@ func _refresh_overlay_text() -> void:
 
 
 func _show_title() -> void:
-	_show_overlay(GAME_TITLE, "title_body", "play", _start_game, true, "title")
+	_show_overlay("game_name", "title_body", "play", _start_game, true, "title")
 
 
 func _build_animal_picker() -> HBoxContainer:
