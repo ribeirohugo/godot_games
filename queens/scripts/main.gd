@@ -102,9 +102,15 @@ var font: Font
 var bold: Font
 var styles := {}
 var sfx
+var icon_mode := false  # this copy only draws the app icon (see _render_icon)
 
 
 func _ready() -> void:
+	if icon_mode:
+		return
+	if "--render-icon" in OS.get_cmdline_user_args():
+		_render_icon()
+		return
 	font = _font(400)
 	bold = _font(700)
 	sfx = SfxScript.new()
@@ -932,6 +938,11 @@ func _card_rect() -> Rect2:
 # --- Drawing -------------------------------------------------------------------------------------
 
 func _draw() -> void:
+	if icon_mode:
+		_draw_icon()
+		return
+	if font == null:  # only rendering the icon
+		return
 	draw_rect(Rect2(Vector2.ZERO, SCREEN), BG)
 
 	# Header.
@@ -1288,6 +1299,66 @@ func _text(pos: Vector2, text: String, font_size: int, color: Color, face: Font,
 
 func _time(seconds: int) -> String:
 	return "%02d:%02d" % [seconds / 60, seconds % 60]
+
+
+# --- Icon --------------------------------------------------------------------------------------
+
+## Renders icon.png (512x512, rounded corners) and quits. Run: play the game with "-- --render-icon".
+func _render_icon() -> void:
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(512, 512)
+	viewport.transparent_bg = true
+	viewport.msaa_2d = Viewport.MSAA_8X
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	var art: Node2D = get_script().new()
+	art.icon_mode = true
+	viewport.add_child(art)
+	add_child(viewport)
+	for i in 4:
+		await RenderingServer.frame_post_draw
+	var img := viewport.get_texture().get_image()
+	img.convert(Image.FORMAT_RGBA8)
+	var radius := 92.0
+	for py in 512:
+		for px in 512:
+			var q := Vector2(absf(px + 0.5 - 256.0), absf(py + 0.5 - 256.0)) - Vector2(256.0 - radius, 256.0 - radius)
+			var dist := Vector2(maxf(q.x, 0.0), maxf(q.y, 0.0)).length() - radius
+			if dist > -1.0:
+				var col := img.get_pixel(px, py)
+				col.a = clampf(0.5 - dist, 0.0, 1.0)
+				img.set_pixel(px, py, col)
+	img.save_png(ProjectSettings.globalize_path("res://icon.png"))
+	get_tree().quit()
+
+
+func _draw_icon() -> void:
+	# A solved 4x4 puzzle on a deep royal background: rounded jewel-toned tiles with gaps
+	# (no black grid) and cream crowns.
+	for y in 512:
+		draw_rect(Rect2(0, y, 512, 1), Color("2a1f5c").lerp(Color("120d2e"), y / 511.0))
+	var regions := [0, 0, 1, 1, 0, 2, 2, 1, 3, 2, 2, 1, 3, 3, 2, 2]
+	var tones := [Color("8b5cf6"), Color("f59e0b"), Color("10b981"), Color("ef4476")]
+	var queens := [1, 7, 8, 14]  # one per row, column and region, none touching
+	var cell := 96.0
+	var gap := 12.0
+	var origin := Vector2(256, 256) - Vector2.ONE * (cell * 2 + gap * 1.5)
+	for i in 16:
+		var rect := Rect2(origin + Vector2(i % 4, i / 4) * (cell + gap), Vector2(cell, cell))
+		var tone: Color = tones[regions[i]]
+		_icon_tile(rect.grow(-2), tone.darkened(0.35))
+		_icon_tile(Rect2(rect.position, rect.size - Vector2(0, 8)), tone)
+		if i in queens:
+			var c := rect.get_center() + Vector2(0, -2)
+			_crown(c + Vector2(0, 5), 66.0, Color(0, 0, 0, 0.3))
+			_crown(c, 66.0, Color("fff6dc"))
+
+
+func _icon_tile(rect: Rect2, color: Color) -> void:
+	var box := StyleBoxFlat.new()
+	box.bg_color = color
+	box.set_corner_radius_all(18)
+	box.anti_aliasing = true
+	draw_style_box(box, rect)
 
 
 # --- Save --------------------------------------------------------------------------------------
