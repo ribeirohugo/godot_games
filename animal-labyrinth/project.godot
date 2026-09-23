@@ -23,6 +23,7 @@ window/size/viewport_width=960
 window/size/viewport_height=600
 window/stretch/mode="canvas_items"
 window/stretch/aspect="expand"
+window/handheld/orientation=4
 
 [dotnet]
 
@@ -32,3 +33,4 @@ project/assembly_name="AnimalLabyrinth"
 
 anti_aliasing/quality/msaa_2d=2
 environment/defaults/default_clear_color=Color(0.12, 0.45, 0.7, 1)
+renderer/rendering_method.mobile="gl_compatibility"

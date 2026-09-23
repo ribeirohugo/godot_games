@@ -33,6 +33,7 @@ copies are git-ignored.
   edit.bat play.bat      open in the editor / run the game
   export-web.bat serve-web.bat export-windows.bat
   export-msix.bat msix.env   Microsoft Store package (only games that are published)
+  export-amazon.bat      Amazon Appstore APK (uses the "Android" preset)
   store-listing/         Store texts and images (only games that are published, see below)
 ```
 
@@ -51,6 +52,7 @@ All scripts start with `call "%~dp0..\_config.bat" "%~dp0."`, which reads `.env`
 | `export-web.bat` | `build\web\index.html` | `serve-web.bat` serves it on http://localhost:8060. Needs web templates and a **non-.NET** Godot: the .NET (mono) build refuses to export Web, so this fails with the current `.env` for every game. |
 | `export-windows.bat` | `build\windows\<Name>.exe` | Single exe with the pck embedded (`binary_format/embed_pck`). |
 | `export-msix.bat [sign]` | `build\msix\<Name>_<version>_x64.msix` | Runs `_msix.ps1`. See below. |
+| `export-amazon.bat` | `build\amazon\<Name>.apk` | Signed APK for the Amazon Appstore (only Animal Labyrinth so far). See below. |
 
 `build/` and `.godot/` are git-ignored.
 
@@ -87,6 +89,18 @@ the problem, which `makeappx` does not.
 `IDENTITY_NAME` and `PUBLISHER` for a new game are a guess until copied from Partner Center > Product
 management > Product identity; the build does not warn about a wrong guess (it only warns about
 `CHANGEME`), and the Store rejects a package whose identity does not match.
+
+### Amazon Appstore (`export-amazon.bat`)
+
+Exports the `Android` preset (APK, armeabi-v7a + arm64-v8a for Fire tablets, no Gradle build) signed
+with the release keystore named by `ANDROID_KEYSTORE`, `ANDROID_KEYSTORE_USER` and
+`ANDROID_KEYSTORE_PASSWORD` in `.env`; the script passes them to Godot as
+`GODOT_ANDROID_KEYSTORE_RELEASE_*`, so no secrets go in `export_presets.cfg`. One keystore serves every
+game; back it up, since every update must be signed with the same key. Needs the Android export
+templates, the Android SDK path in the Godot editor settings and a JDK 17. Raise `version/code` (and
+`version/name`) of the preset for every upload. The game sets
+`display/window/handheld/orientation=4` (sensor landscape) and
+`rendering/renderer/rendering_method.mobile="gl_compatibility"`, which Fire tablets run best.
 
 ## Store listing (`<game>/store-listing/`)
 

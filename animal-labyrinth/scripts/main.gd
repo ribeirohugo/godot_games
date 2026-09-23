@@ -144,7 +144,9 @@ func _unhandled_input(event: InputEvent) -> void:
 	if phase != "build" or settings_open:
 		return
 	if event is InputEventMouseButton and event.pressed and event.button_index == MOUSE_BUTTON_LEFT:
-		var slot := slot_of(Art.cell_at(board_view.get_local_mouse_position()))
+		# Use the event's own position so a tap on a touch screen lands where the finger is.
+		var local: InputEventMouseButton = board_view.make_input_local(event)
+		var slot := slot_of(Art.cell_at(local.position))
 		if slot >= 0 and board[slot] == 0:
 			_place(slot)
 
