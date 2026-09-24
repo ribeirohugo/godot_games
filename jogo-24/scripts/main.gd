@@ -1,5 +1,6 @@
 extends Node2D
-## Game of 24: combine the four numbers on the card with + − × ÷ until one is left. Reach exactly 24 to win.
+## 24 Game Pro (Jogo do 24 Pro): combine the four numbers on the card with + − × ÷ until one is left. Reach exactly 24 to win.
+## Double Cards mode deals a figure-8 card with six numbers, and all six must be used.
 ## Click a number, an operation, then another number (or use the arrow keys for the numbers, + - * / for the
 ## operations). U / Backspace undoes, N starts a new game, Esc goes back. Statistics are kept per difficulty.
 
@@ -23,6 +24,10 @@ const RADICAL_MAX := {2: 8, 3: 15}
 ## ... or as an unreduced fraction ("10/2" for 5) with a denominator in this range.
 const FRACTION_DEN := {2: [2, 3], 3: [2, 5]}
 const OPS := ["+", "-", "*", "/"]
+## Game modes: how many numbers are dealt. The card's layout follows the count (4 = classic, 6 = double).
+const MODES := [{"key": "mode_classic", "count": 4}, {"key": "mode_double", "count": 6}]
+## Double card slots, clockwise from the top: top, upper right, lower right, bottom, lower left, upper left.
+const DOUBLE_ANGLES := [0.0, PI / 2.0, PI / 2.0, PI, -PI / 2.0, -PI / 2.0]
 ## The four numbers sit at the top, right, bottom and left of the card.
 ## Numbers are turned so their tops face the card's edges, like on the printed card.
 const SLOT_ANGLES := [0.0, PI / 2.0, PI, -PI / 2.0]
@@ -50,17 +55,22 @@ const CARD_RADIUS := 268.0  # half the side of the square card
 ## square, then the flat top edge, the outer corner (it pokes out past the yellow disc) and the flat side edge.
 const ARM := [Vector2(-0.16, -0.214), Vector2(-0.37, -0.71), Vector2(-0.71, -0.71), Vector2(-0.71, -0.37), Vector2(-0.214, -0.16)]
 const ARM_APEX := Vector2(-0.19, -0.19)  # the pinstripes fan out from here
+## Double Cards: radius of each disc and how far their centers sit above and below the card's center,
+## in units of half the card.
+const DOUBLE_R := 0.5
+const DOUBLE_D := 0.46
 const STRIPE := Color("f8a9ba")
 const DIGIT := Color("15142e")
 
 var screen := "menu"  # "menu", "game", "stats" or "settings"
 var level := 0
+var mode := 0  # index into MODES
 var language := ""
 var sound_on := true
 var volume := 1.0  # 0..1
 var dragging_volume := false
 
-var slots: Array = []  # four entries: {"v": Vector2i, "e": expression, "label": disguise} or null
+var slots: Array = []  # four or six entries: {"v": Vector2i, "e": expression, "label": disguise} or null
 var original: Array = []
 var history: Array = []
 var first := -1
@@ -69,7 +79,7 @@ var over := false
 var status := {"key": "status_start", "arg": ""}
 var solution_text := ""
 var elapsed := 0.0
-var results: Array = []  # level * 2 + (1 if won), oldest first
+var results: Array = []  # mode * 8 + level * 2 + (1 if won), oldest first
 var confirm_clear := false
 
 var hover := ""
@@ -135,6 +145,8 @@ func _serif() -> Font:
 
 func _apply_settings() -> void:
 	TranslationServer.set_locale(language)
+	if is_inside_tree():
+		get_window().title = tr("title")
 	AudioServer.set_bus_mute(0, not sound_on)
 	AudioServer.set_bus_volume_db(0, linear_to_db(maxf(volume, 0.001)))
 
@@ -146,13 +158,13 @@ func _play(sound: String) -> void:
 
 # --- Rounds ----------------------------------------------------------------------------------
 
-## Deals four numbers that can make 24 with the level's operations.
+## Deals four (or six in Double Cards) numbers that can make 24 with the level's operations.
 func _deal() -> void:
 	var cfg: Dictionary = LEVELS[level]
 	var numbers: Array = []
 	while true:
 		numbers.clear()
-		for i in 4:
+		for i in MODES[mode].count:
 			numbers.append(randi_range(cfg.lo, cfg.hi))
 		if SolverScript.solve_numbers(numbers, cfg.ops) != "":
 			break
@@ -197,7 +209,7 @@ func _fraction(n: int, den: Array) -> String:
 
 func _filled() -> Array:
 	var out: Array = []
-	for i in 4:
+	for i in slots.size():
 		if slots[i] != null:
 			out.append(i)
 	return out
@@ -314,7 +326,7 @@ func _clock_text(seconds: float) -> String:
 # --- Statistics ------------------------------------------------------------------------------
 
 func _record(won: bool) -> void:
-	results.append(level * 2 + (1 if won else 0))
+	results.append(mode * 8 + level * 2 + (1 if won else 0))
 	if results.size() > MAX_RESULTS:
 		results = results.slice(results.size() - MAX_RESULTS)
 	_save()
@@ -324,14 +336,16 @@ func _summary() -> Dictionary:
 	var by_level := []
 	for i in LEVELS.size():
 		by_level.append({"games": 0, "wins": 0})
+	var double := {"games": 0, "wins": 0}
 	var wins := 0
 	var best := 0
 	var running := 0
 	for code: int in results:
 		var won := code % 2 == 1
-		by_level[code / 2].games += 1
+		var row: Dictionary = double if code >= 8 else by_level[(code % 8) / 2]
+		row.games += 1
 		if won:
-			by_level[code / 2].wins += 1
+			row.wins += 1
 			wins += 1
 			running += 1
 			best = maxi(best, running)
@@ -342,7 +356,7 @@ func _summary() -> Dictionary:
 		if results[i] % 2 == 0:
 			break
 		current += 1
-	return {"games": results.size(), "wins": wins, "best": best, "current": current, "by_level": by_level}
+	return {"games": results.size(), "wins": wins, "best": best, "current": current, "by_level": by_level, "double": double}
 
 
 # --- Layout and input ------------------------------------------------------------------------
@@ -352,6 +366,8 @@ func _buttons() -> Array:
 	var list: Array = []
 	match screen:
 		"menu":
+			for i in MODES.size():
+				list.append(_btn("mode%d" % i, Rect2(560 + i * 195, 226, 185, 46), tr(MODES[i].key), "ghost", true, mode == i, 19))
 			for i in LEVELS.size():
 				list.append(_btn("lvl%d" % i, Rect2(560, 320 + i * 76, 380, 64), tr(LEVELS[i].key), "level", true, false, 26))
 			list.append(_btn("stats", Rect2(560, 640, 185, 52), tr("statistics"), "ghost", true, false, 18))
@@ -375,9 +391,9 @@ func _buttons() -> Array:
 			list.append(_btn("sound", SOUND_ROW, "", "hit", true, false, 0))
 			list.append(_btn("volume", VOLUME_TRACK.grow_individual(14, 16, 14, 16), "", "hit", sound_on, false, 0))
 			for i in StringsScript.LANGUAGES.size():
-				var rect := Rect2(180 + (i % 2) * 330, 430 + (i / 2) * 64, 310, 54)
+				var rect := Rect2(172 + (i % 3) * 222, 408 + (i / 3) * 56, 212, 48)
 				var entry: Array = StringsScript.LANGUAGES[i]
-				list.append(_btn("lang" + entry[0], rect, entry[1], "ghost", true, language == entry[0], 21))
+				list.append(_btn("lang" + entry[0], rect, entry[1], "ghost", true, language == entry[0], 18))
 	return list
 
 
@@ -385,8 +401,29 @@ func _btn(id: String, rect: Rect2, label: String, kind: String, enabled: bool, s
 	return {"id": id, "rect": rect, "label": label, "kind": kind, "on": enabled, "sel": selected, "size": size}
 
 
-func _slot_center(index: int, c := CARD_CENTER, r := CARD_RADIUS) -> Vector2:
-	return c + SLOT_DIRS[index] * r * 0.56
+## Where number `index` sits on a card of `count` numbers centered on `c`, `h` being half its side.
+func _slot_center(index: int, count := 4, c := CARD_CENTER, h := CARD_RADIUS) -> Vector2:
+	if count == 4:
+		return c + SLOT_DIRS[index] * h * 0.56
+	var r := h * DOUBLE_R
+	var upper := c - Vector2(0, h * DOUBLE_D)
+	var lower := c + Vector2(0, h * DOUBLE_D)
+	match index:
+		0:
+			return upper + Vector2(0, -r * 0.62)
+		1:
+			return upper + Vector2(r * 0.62, 0)
+		2:
+			return lower + Vector2(r * 0.62, 0)
+		3:
+			return lower + Vector2(0, r * 0.62)
+		4:
+			return lower + Vector2(-r * 0.62, 0)
+	return upper + Vector2(-r * 0.62, 0)
+
+
+func _slot_radius(count: int, h: float) -> float:
+	return h * (0.28 if count == 4 else 0.16)
 
 
 func _hit(p: Vector2) -> String:
@@ -394,15 +431,20 @@ func _hit(p: Vector2) -> String:
 		if b.on and b.rect.has_point(p):
 			return b.id
 	if screen == "game" and not over:
-		for i in 4:
-			if slots[i] != null and p.distance_to(_slot_center(i)) <= CARD_RADIUS * 0.29:
+		for i in slots.size():
+			if slots[i] != null and p.distance_to(_slot_center(i, slots.size())) <= _slot_radius(slots.size(), CARD_RADIUS) + 4.0:
 				return "t%d" % i
 	return ""
 
 
 func _press(id: String) -> void:
 	confirm_clear = confirm_clear and id == "clear"
-	if id.begins_with("lvl"):
+	if id.begins_with("mode"):
+		mode = int(id.substr(4))
+		_deal()
+		_save()
+		_play("select")
+	elif id.begins_with("lvl"):
 		_start_level(int(id.substr(3)))
 	elif id.begins_with("t"):
 		_click_slot(int(id.substr(1)))
@@ -488,6 +530,8 @@ func _key(event: InputEventKey) -> void:
 		return
 	if screen != "game":
 		return
+	if slots.size() != 4 and event.keycode in [KEY_UP, KEY_RIGHT, KEY_DOWN, KEY_LEFT]:
+		return
 	match event.keycode:
 		KEY_UP:
 			_click_slot(0)
@@ -497,6 +541,10 @@ func _key(event: InputEventKey) -> void:
 			_click_slot(2)
 		KEY_LEFT:
 			_click_slot(3)
+		KEY_1, KEY_2, KEY_3, KEY_4, KEY_5, KEY_6:
+			var index: int = event.keycode - KEY_1
+			if index < slots.size():
+				_click_slot(index)
 		KEY_BACKSPACE, KEY_U, KEY_Z:
 			_undo()
 		KEY_N, KEY_ENTER, KEY_KP_ENTER:
@@ -567,12 +615,11 @@ func _draw() -> void:
 
 
 func _draw_menu() -> void:
-	_text(tr("title"), Vector2(SCREEN.x / 2, 78), 60, NAVY, 1, true)
-	_para(tr("instructions"), Rect2(140, 128, 720, 90), 22, MUTED)
+	_draw_logo(Vector2(SCREEN.x / 2, 80))
+	_para(tr("instructions_double" if mode == 1 else "instructions"), Rect2(140, 150, 720, 90), 22, MUTED)
 	var demo: Array = []
-	var shown: Array = original
-	for i in 4:
-		demo.append({"v": Vector2i(shown[i], 1), "e": "", "label": ""})
+	for n: int in original:
+		demo.append({"v": Vector2i(n, 1), "e": "", "label": ""})
 	var dots := int(hover.substr(3)) + 1 if hover.begins_with("lvl") else 0
 	_draw_card(Vector2(280, 470), 200.0, demo, -1, "", dots)
 	_text(tr("choose_difficulty"), Vector2(750, 290), 24, INK, 1, true)
@@ -583,13 +630,16 @@ func _draw_menu() -> void:
 func _draw_game() -> void:
 	for b: Dictionary in _buttons():
 		_draw_button(b)
-	_text(tr(LEVELS[level].key), Vector2(SCREEN.x / 2, 44), 30, NAVY, 1, true)
+	var title := tr(LEVELS[level].key)
+	if mode == 1:
+		title = tr("mode_double") + "  ·  " + title
+	_text(title, Vector2(SCREEN.x / 2, 44), 30, NAVY, 1, true)
 	_text(_clock_text(elapsed), Vector2(SCREEN.x - 28, 44), 28, MUTED, 2, true)
 	_draw_card(CARD_CENTER, CARD_RADIUS, slots, first, hover, level + 1)
 	var status_color := GREEN if over else (RED if status.key == "status_wrong" or status.key == "status_div0" else INK)
-	_para(_status_text(), Rect2(660, 118, 326, 96), 24, status_color, HORIZONTAL_ALIGNMENT_LEFT, true)
+	_para(_status_text(), Rect2(660, 110, 326, 96), 22, status_color, HORIZONTAL_ALIGNMENT_LEFT, true)
 	if solution_text != "":
-		_para(solution_text, Rect2(660, 214, 326, 70), 19, MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+		_para(solution_text, Rect2(660, 222, 326, 60), 18, MUTED, HORIZONTAL_ALIGNMENT_LEFT)
 
 
 func _draw_settings() -> void:
@@ -615,7 +665,7 @@ func _draw_settings() -> void:
 	draw_circle(knob, 16.0, fill_color)
 	draw_circle(knob, 8.0, CREAM)
 	# Language.
-	_round(Rect2(150, 342, 700, 300), 18, Color.WHITE, LINE, 1)
+	_round(Rect2(150, 342, 700, 300 + 20), 18, Color.WHITE, LINE, 1)
 	_text(tr("language"), Vector2(190, 382), 26, INK, 0, true)
 	for b: Dictionary in _buttons():
 		if b.kind != "hit":
@@ -638,35 +688,77 @@ func _draw_stats() -> void:
 		_text(boxes[i][1], rect.get_center() + Vector2(0, -12), 46, NAVY, 1, true)
 		_text(boxes[i][0], rect.get_center() + Vector2(0, 34), 18, MUTED, 1)
 	_text(tr("by_difficulty"), Vector2(30, 258), 24, INK, 0, true)
-	for i in LEVELS.size():
-		var row: Dictionary = s.by_level[i]
-		var y := 296 + i * 50
-		_text(tr(LEVELS[i].key), Vector2(30, y + 20), 21, INK, 0)
+	for i in LEVELS.size() + 1:
+		var row: Dictionary = s.double if i == LEVELS.size() else s.by_level[i]
+		var y := 288 + i * 44
+		_text(tr(MODES[1].key) if i == LEVELS.size() else tr(LEVELS[i].key), Vector2(30, y + 20), 21, INK, 0)
 		var bar := Rect2(250, y + 6, 420, 28)
 		_round(bar, 14, Color("e4e7ec"))
 		if row.games > 0 and row.wins > 0:
 			_round(Rect2(bar.position, Vector2(maxf(bar.size.x * row.wins / row.games, 28.0), bar.size.y)), 14, GREEN)
 		_text(tr("level_detail") % [row.wins, row.games], Vector2(690, y + 20), 19, MUTED, 0)
-	_text(tr("recent_history"), Vector2(30, 508), 24, INK, 0, true)
+	_text(tr("recent_history"), Vector2(30, 520), 24, INK, 0, true)
 	var recent: Array = results.slice(maxi(results.size() - 20, 0))
 	recent.reverse()
 	for i in recent.size():
 		var won: bool = recent[i] % 2 == 1
-		var rect := Rect2(30 + i * 48, 540, 40, 40)
+		var rect := Rect2(30 + i * 48, 550, 40, 40)
 		_round(rect, 10, GREEN if won else RED)
-		_text(str(recent[i] / 2 + 1), rect.get_center(), 20, Color.WHITE, 1, true)
-	_text(tr("won_lost_hint"), Vector2(30, 608), 16, MUTED, 0)
+		if recent[i] >= 8:  # Double Cards: a yellow frame
+			_round(rect.grow(-3), 8, Color.TRANSPARENT, YELLOW, 3)
+		_text(str((recent[i] % 8) / 2 + 1), rect.get_center(), 20, Color.WHITE, 1, true)
+	_text(tr("won_lost_hint"), Vector2(30, 614), 16, MUTED, 0)
 
 
 ## The traditional card: navy square, yellow disc, four red pinstriped arms around a white square, the
 ## numbers on the sides with their tops facing outward, and `dots` yellow dots in every corner (the difficulty).
-## `h` is half the side of the card.
+## Six tiles draw the Double Cards card instead: two such discs joined in a figure 8. `h` is half the card's side.
 func _draw_card(c: Vector2, h: float, tiles: Array, selected: int, hovered := "", dots := 0) -> void:
 	for i in 5:
 		_round(Rect2(c - Vector2(h, h) - Vector2(i, i) * 2.0 + Vector2(0, 8), Vector2(h, h) * 2.0 + Vector2(i, i) * 4.0), h * 0.09 + i * 2.0, Color(0, 0, 0, 0.04))
 	_round(Rect2(c - Vector2(h, h), Vector2(h, h) * 2.0), h * 0.09, NAVY)
-	draw_circle(c, h * 0.9, YELLOW)
-	# Red arms, all the same shape: a wedge from the white square out to the corner of the card.
+	var count := tiles.size()
+	if count == 4:
+		draw_circle(c, h * 0.9, YELLOW)
+		_draw_arms(c, h)
+		_draw_square(c, h)
+	else:
+		# Each disc is a classic card scaled so its disc has radius DOUBLE_R.
+		var k := h * DOUBLE_R / 0.9
+		var upper := c - Vector2(0, h * DOUBLE_D)
+		var lower := c + Vector2(0, h * DOUBLE_D)
+		draw_circle(upper, k * 0.9, YELLOW)
+		draw_circle(lower, k * 0.9, YELLOW)
+		_draw_arms(upper, k)
+		_draw_arms(lower, k)
+		# The inner arms meet in a red band across the waist, like on the printed card.
+		var band := PackedVector2Array([upper + Vector2(-0.12, 0.2) * k, upper + Vector2(0.12, 0.2) * k, c + Vector2(0.2, 0) * k,
+				lower + Vector2(0.12, -0.2) * k, lower + Vector2(-0.12, -0.2) * k, c + Vector2(-0.2, 0) * k])
+		draw_colored_polygon(band, RED)
+		_draw_square(upper, k)
+		_draw_square(lower, k)
+	# Difficulty dots, turned around the card like the numbers.
+	for k in 4:
+		for i in dots:
+			var dot := _rot(Vector2(-0.84, -0.88 + i * 0.1), k * PI / 2.0)
+			draw_circle(c + dot * h, h * 0.034, YELLOW)
+	var radius := _slot_radius(count, h)
+	for i in count:
+		if tiles[i] == null:
+			continue
+		var pos := _slot_center(i, count, c, h)
+		var is_selected := i == selected
+		if is_selected:
+			draw_circle(pos, radius, NAVY)
+		elif hovered == "t%d" % i:
+			draw_circle(pos, radius, Color(1, 1, 1, 0.55))
+		draw_set_transform(pos, SLOT_ANGLES[i] if count == 4 else DOUBLE_ANGLES[i])
+		_draw_value(Vector2.ZERO, tiles[i], radius * 1.64, CREAM if is_selected else DIGIT)
+		draw_set_transform(Vector2.ZERO)
+
+
+## The four red arms around a disc centered on `c`: wedges from the white square out past the disc's rim.
+func _draw_arms(c: Vector2, h: float) -> void:
 	for k in 4:
 		var turn := k * PI / 2.0
 		var polygon := PackedVector2Array()
@@ -679,25 +771,12 @@ func _draw_card(c: Vector2, h: float, tiles: Array, selected: int, hovered := ""
 			var edge := ARM[1].lerp(ARM[2], t) if t < 1.0 else ARM[2].lerp(ARM[3], t - 1.0)
 			var from := ARM_APEX + (edge - ARM_APEX).normalized() * 0.2
 			draw_line(c + _rot(from, turn) * h, c + _rot(edge, turn) * h, STRIPE, maxf(h * 0.004, 1.0), true)
+
+
+## The white square with its thin red outline in the middle of a disc.
+func _draw_square(c: Vector2, h: float) -> void:
 	_round(Rect2(c - Vector2(h, h) * 0.214, Vector2(h, h) * 0.428), h * 0.006, RED)
 	_round(Rect2(c - Vector2(h, h) * 0.2, Vector2(h, h) * 0.4), h * 0.004, Color("fffdf6"))
-	# Difficulty dots, turned around the card like the numbers.
-	for k in 4:
-		for i in dots:
-			var dot := _rot(Vector2(-0.84, -0.88 + i * 0.1), k * PI / 2.0)
-			draw_circle(c + dot * h, h * 0.034, YELLOW)
-	for i in 4:
-		if tiles[i] == null:
-			continue
-		var pos := _slot_center(i, c, h)
-		var is_selected := i == selected
-		if is_selected:
-			draw_circle(pos, h * 0.28, NAVY)
-		elif hovered == "t%d" % i:
-			draw_circle(pos, h * 0.28, Color(1, 1, 1, 0.55))
-		draw_set_transform(pos, SLOT_ANGLES[i])
-		_draw_value(Vector2.ZERO, tiles[i], h * 0.46, CREAM if is_selected else DIGIT)
-		draw_set_transform(Vector2.ZERO)
 
 
 func _rot(v: Vector2, angle: float) -> Vector2:
@@ -772,7 +851,12 @@ func _draw_button(b: Dictionary) -> void:
 			draw_circle(dot, 8.0, NAVY)
 			draw_circle(dot, 6.5, YELLOW)
 	else:
-		_text(b.label, rect.get_center() + Vector2(0, -2 if b.kind == "op" else 0), b.size, text_color, 1, b.kind != "ghost")
+		# Shrink long labels (some languages) until they fit the button.
+		var label_font := bold if b.kind != "ghost" else font
+		var label_size: int = b.size
+		while label_size > 10 and label_font.get_string_size(b.label, HORIZONTAL_ALIGNMENT_LEFT, -1, label_size).x > rect.size.x - 18.0:
+			label_size -= 1
+		_text(b.label, rect.get_center() + Vector2(0, -2 if b.kind == "op" else 0), label_size, text_color, 1, b.kind != "ghost")
 
 
 func _round(rect: Rect2, radius: float, fill: Color, border := Color.TRANSPARENT, border_width := 0) -> void:
@@ -831,13 +915,49 @@ func _render_icon() -> void:
 	get_tree().quit()
 
 
+## The printed card of image.png filling the icon, with "24 PRO" on the white square.
 func _draw_icon() -> void:
-	for y in 512:
-		draw_rect(Rect2(0, y, 512, 1), Color("2e2da3").lerp(Color("14134f"), y / 511.0))
+	draw_rect(Rect2(0, 0, 512, 512), NAVY)
 	var tiles: Array = []
-	for n in [3, 8, 3, 8]:
+	for n in [8, 4, 1, 5]:  # (5 - 1) × 4 + 8
 		tiles.append({"v": Vector2i(n, 1), "e": "", "label": ""})
-	_draw_card(Vector2(256, 256), 236.0, tiles, -1, "", 3)
+	_draw_card(Vector2(256, 256), 250.0, tiles, -1, "", 3)
+	_draw_plate(Vector2(256, 256), 250.0, true)
+
+
+## The white centre square of the logo with "24" (and "PRO" when it is big enough to read).
+func _draw_plate(c: Vector2, h: float, with_pro: bool) -> void:
+	var half := h * 0.272
+	var plate := Rect2(c - Vector2(half, half), Vector2(half, half) * 2.0)
+	_round(plate.grow(h * 0.024), h * 0.032, RED)
+	_round(plate, h * 0.02, Color("fffdf6"))
+	if with_pro:
+		_text("24", c + Vector2(0, -h * 0.072), int(h * 0.32), NAVY, 1, true, numfont)
+		_text("PRO", c + Vector2(0, h * 0.16), int(h * 0.12), RED, 1, true)
+	else:
+		_text("24", c, int(h * 0.36), NAVY, 1, true, numfont)
+
+
+## The in-game logo: the card emblem, the name and a red PRO badge, centered on `center`.
+func _draw_logo(center: Vector2) -> void:
+	var h := 50.0
+	var name := tr("title_name")
+	var name_size := 58
+	var name_width := bold.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, name_size).x
+	var badge_width := bold.get_string_size("PRO", HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x + 28.0
+	var total := h * 2.0 + 22.0 + name_width + 14.0 + badge_width
+	var x := center.x - total * 0.5
+	var emblem := Vector2(x + h, center.y)
+	var tiles: Array = []
+	for n in [8, 4, 1, 5]:
+		tiles.append({"v": Vector2i(n, 1), "e": "", "label": ""})
+	_draw_card(emblem, h, tiles, -1, "", 3)
+	_draw_plate(emblem, h, false)
+	x += h * 2.0 + 22.0
+	_text(name, Vector2(x, center.y), name_size, NAVY, 0, true)
+	x += name_width + 14.0
+	_round(Rect2(x, center.y - 23, badge_width, 46), 12, RED)
+	_text("PRO", Vector2(x + badge_width * 0.5, center.y), 30, Color.WHITE, 1, true)
 
 
 ## Windows .ico with PNG images at several sizes.
@@ -876,19 +996,21 @@ func _load() -> void:
 	if config.load(SAVE_PATH) != OK:
 		return
 	level = clampi(int(config.get_value("settings", "level", 0)), 0, LEVELS.size() - 1)
+	mode = clampi(int(config.get_value("settings", "mode", 0)), 0, MODES.size() - 1)
 	language = str(config.get_value("settings", "language", ""))
 	sound_on = bool(config.get_value("settings", "sound", true))
 	volume = clampf(float(config.get_value("settings", "volume", 1.0)), 0.0, 1.0)
 	var saved: Variant = config.get_value("stats", "results", [])
 	if saved is Array:
 		for code in saved:
-			if code is int and code >= 0 and code < LEVELS.size() * 2:
+			if code is int and code >= 0 and code < 16:
 				results.append(code)
 
 
 func _save() -> void:
 	var config := ConfigFile.new()
 	config.set_value("settings", "level", level)
+	config.set_value("settings", "mode", mode)
 	config.set_value("settings", "language", language)
 	config.set_value("settings", "sound", sound_on)
 	config.set_value("settings", "volume", volume)

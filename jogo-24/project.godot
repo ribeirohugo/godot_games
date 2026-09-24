@@ -10,7 +10,7 @@ config_version=5
 
 [application]
 
-config/name="Jogo do 24"
+config/name="24 Game Pro"
 run/main_scene="res://common/intro/intro.tscn"
 config/features=PackedStringArray("4.7")
 config/icon="res://icon.png"
