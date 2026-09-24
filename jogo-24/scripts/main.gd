@@ -92,27 +92,43 @@ var bold: Font
 var numfont: Font  # serif digits, like the printed cards
 var sfx
 var icon_mode := false  # this copy only draws the app icon (see _render_icon)
+var art := {}  # this copy only draws one Store image: {"kind": box/poster/hero, "size": Vector2} (see _render_store)
+var art_card := {}  # this copy only draws one card at its origin: {"tiles", "h", "dots"} (Store art)
+var store_shot := false  # a Store screenshot: plays normally but never reads or writes the save file
 
 
 func _ready() -> void:
 	font = _font(400)
 	bold = _font(700)
 	numfont = _serif()
-	if icon_mode:
+	if icon_mode or not art_card.is_empty():
 		return
-	if "--render-icon" in OS.get_cmdline_user_args():
+	StringsScript.install()
+	if not art.is_empty():
+		_build_art()
+		return
+	if not store_shot and "--render-icon" in OS.get_cmdline_user_args():
 		hide()  # only the icon sub-viewport draws
 		_render_icon()
 		return
+	if not store_shot and "--render-store" in OS.get_cmdline_user_args():
+		hide()
+		_render_store()
+		return
 	sfx = SfxScript.new()
 	add_child(sfx)
-	StringsScript.install()
-	_load()
+	if not store_shot:
+		_load()
 	if language == "":
 		language = StringsScript.system_language()
 	_apply_settings()
 	_deal()
 	set_process(true)
+
+
+## True for the copies that only draw a picture (icon, Store art) and never play.
+func _is_prop() -> bool:
+	return icon_mode or not art.is_empty() or not art_card.is_empty()
 
 
 func _notification(what: int) -> void:
@@ -492,7 +508,7 @@ func _press(id: String) -> void:
 
 
 func _input(event: InputEvent) -> void:
-	if icon_mode:
+	if _is_prop():
 		return
 	if event is InputEventMouseMotion:
 		hover = _hit(get_global_mouse_position())
@@ -571,7 +587,7 @@ func _key(event: InputEventKey) -> void:
 
 
 func _process(delta: float) -> void:
-	if icon_mode:
+	if _is_prop():
 		return
 	clock += delta
 	if screen == "game" and not over and focused:
@@ -598,6 +614,12 @@ func _start_confetti() -> void:
 func _draw() -> void:
 	if icon_mode:
 		_draw_icon()
+		return
+	if not art_card.is_empty():
+		_draw_card(Vector2.ZERO, art_card.h, art_card.tiles, -1, "", art_card.dots)
+		return
+	if not art.is_empty():
+		_draw_art()
 		return
 	match screen:
 		"menu":
@@ -939,13 +961,18 @@ func _draw_plate(c: Vector2, h: float, with_pro: bool) -> void:
 
 
 ## The in-game logo: the card emblem, the name and a red PRO badge, centered on `center`.
-func _draw_logo(center: Vector2) -> void:
-	var h := 50.0
+## `max_width` > 0 shrinks the whole logo until it fits that width.
+func _draw_logo(center: Vector2, scale_by := 1.0, name_color := NAVY, max_width := 0.0) -> void:
+	var h := 50.0 * scale_by
 	var name := tr("title_name")
-	var name_size := 58
+	var name_size := int(58 * scale_by)
+	var badge_size := int(30 * scale_by)
 	var name_width := bold.get_string_size(name, HORIZONTAL_ALIGNMENT_LEFT, -1, name_size).x
-	var badge_width := bold.get_string_size("PRO", HORIZONTAL_ALIGNMENT_LEFT, -1, 30).x + 28.0
-	var total := h * 2.0 + 22.0 + name_width + 14.0 + badge_width
+	var badge_width := bold.get_string_size("PRO", HORIZONTAL_ALIGNMENT_LEFT, -1, badge_size).x + 28.0 * scale_by
+	var total := h * 2.0 + 22.0 * scale_by + name_width + 14.0 * scale_by + badge_width
+	if max_width > 0.0 and total > max_width:
+		_draw_logo(center, scale_by * max_width / total * 0.98, name_color)
+		return
 	var x := center.x - total * 0.5
 	var emblem := Vector2(x + h, center.y)
 	var tiles: Array = []
@@ -953,11 +980,167 @@ func _draw_logo(center: Vector2) -> void:
 		tiles.append({"v": Vector2i(n, 1), "e": "", "label": ""})
 	_draw_card(emblem, h, tiles, -1, "", 3)
 	_draw_plate(emblem, h, false)
-	x += h * 2.0 + 22.0
-	_text(name, Vector2(x, center.y), name_size, NAVY, 0, true)
-	x += name_width + 14.0
-	_round(Rect2(x, center.y - 23, badge_width, 46), 12, RED)
-	_text("PRO", Vector2(x + badge_width * 0.5, center.y), 30, Color.WHITE, 1, true)
+	x += h * 2.0 + 22.0 * scale_by
+	_text(name, Vector2(x, center.y), name_size, name_color, 0, true)
+	x += name_width + 14.0 * scale_by
+	_round(Rect2(x, center.y - 23 * scale_by, badge_width, 46 * scale_by), 12 * scale_by, RED)
+	_text("PRO", Vector2(x + badge_width * 0.5, center.y), badge_size, Color.WHITE, 1, true)
+
+
+# --- Store listing -----------------------------------------------------------------------------
+
+## Tagline on the Store art. The Store listing is only in English and Portuguese.
+const STORE_TAGLINE := {
+	"en": "Make exactly 24 with + − × ÷. Classic cards and the new Double Cards mode.",
+	"pt": "Faz exatamente 24 com + − × ÷. Cartas clássicas e o novo modo Cartas Duplas.",
+}
+const STORE_LANGUAGES := ["en", "pt"]
+
+
+## Renders everything in store-listing/ and quits: the box, poster and hero art at full and half size and
+## five screenshots, English at the top level and Portuguese in pt/, plus the app tiles from icon.png.
+## Run:  Godot --path <game> -- --render-store
+func _render_store() -> void:
+	var root_folder := ProjectSettings.globalize_path("res://store-listing")
+	DirAccess.make_dir_recursive_absolute(root_folder)
+	var icon := Image.load_from_file(ProjectSettings.globalize_path("res://icon.png"))
+	for side in [300, 150, 71]:
+		var tile: Image = icon.duplicate()
+		tile.resize(side, side, Image.INTERPOLATE_LANCZOS)
+		tile.save_png("%s/AppTile.%dx%d.png" % [root_folder, side, side])
+	for code: String in STORE_LANGUAGES:
+		TranslationServer.set_locale(code)
+		var folder := root_folder + ("" if code == "en" else "/" + code)
+		DirAccess.make_dir_recursive_absolute(folder)
+		for spec in [["BoxArt", Vector2(1080, 1080), "box"], ["PosterArt", Vector2(720, 1080), "poster"], ["HeroArt", Vector2(1920, 1080), "hero"]]:
+			var painter: Node2D = get_script().new()
+			painter.art = {"kind": spec[2], "size": spec[1]}
+			var img := await _snap(painter, Vector2i(spec[1]), 2.0, 4)
+			for half in 2:
+				img.save_png("%s/%s.%dx%d.png" % [folder, spec[0], img.get_width(), img.get_height()])
+				img.resize(img.get_width() / 2, img.get_height() / 2, Image.INTERPOLATE_LANCZOS)
+		for shot in 5:
+			var game: Node2D = get_script().new()
+			game.store_shot = true
+			game.sound_on = false
+			game.language = code
+			var img := await _snap(game, Vector2i(SCREEN), 2.0, 40, _stage.bind(shot))
+			img.save_png("%s/%s.png" % [folder, "screenshot" if shot == 0 else "screenshot-%d" % (shot + 1)])
+	get_tree().quit()
+
+
+## Draws `node` scaled by `zoom` in an offscreen viewport of `size` × zoom and returns the picture.
+## `setup` runs on the node once it is ready; `frames` lets animations (confetti) play first.
+func _snap(node: Node2D, size: Vector2i, zoom: float, frames: int, setup := Callable()) -> Image:
+	var viewport := SubViewport.new()
+	viewport.size = Vector2i(Vector2(size) * zoom)
+	viewport.msaa_2d = Viewport.MSAA_4X
+	viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	node.scale = Vector2(zoom, zoom)
+	viewport.add_child(node)
+	add_child(viewport)
+	await get_tree().process_frame
+	if setup.is_valid():
+		setup.call(node)
+	for i in frames:
+		await RenderingServer.frame_post_draw
+	var img := viewport.get_texture().get_image()
+	img.convert(Image.FORMAT_RGB8)
+	viewport.queue_free()
+	return img
+
+
+## Puts a screenshot copy of the game in a real moment of play.
+func _stage(game: Node2D, shot: int) -> void:
+	match shot:
+		0:  # Classic, Hard: disguised numbers, the first number and × picked.
+			game.mode = 0
+			game.level = 2
+			game.screen = "game"
+			game.slots = [{"v": Vector2i(6, 1), "e": "6", "label": "√36"}, {"v": Vector2i(8, 1), "e": "8", "label": ""},
+					{"v": Vector2i(3, 1), "e": "3", "label": "9/3"}, {"v": Vector2i(11, 1), "e": "11", "label": ""}]
+			game.original = [6, 8, 3, 11]
+			game.first = 0
+			game.op = "*"
+			game.status = {"key": "status_second", "arg": ""}
+			game.elapsed = 37.0
+		1:  # Double Cards, Medium, a move already made.
+			game.mode = 1
+			game.level = 1
+			game.screen = "game"
+			game.slots = [{"v": Vector2i(14, 1), "e": "14", "label": ""}, {"v": Vector2i(1, 1), "e": "1", "label": ""},
+					{"v": Vector2i(12, 1), "e": "12", "label": ""}, {"v": Vector2i(9, 1), "e": "9", "label": ""},
+					{"v": Vector2i(3, 1), "e": "3", "label": ""}, {"v": Vector2i(8, 1), "e": "8", "label": ""}]
+			game.original = [14, 1, 12, 9, 3, 8]
+			game.first = 5
+			game.status = {"key": "status_operator", "arg": ""}
+			game.elapsed = 52.0
+		2:  # Classic, Medium: just won, with confetti.
+			game.mode = 0
+			game.level = 1
+			game.screen = "game"
+			game.slots = [{"v": Vector2i(24, 1), "e": "", "label": ""}, null, null, null]
+			game.original = [3, 3, 8, 8]
+			game.history = [[]]
+			game.over = true
+			game.status = {"key": "status_win", "arg": ""}
+			game.elapsed = 48.0
+			game._start_confetti()
+		3:  # The menu with Double Cards picked.
+			game.mode = 1
+			game.screen = "menu"
+			game.original = [14, 1, 12, 9, 3, 8]
+			game.hover = "lvl2"
+		4:  # Statistics after a good run.
+			game.screen = "stats"
+			game.results = [0, 1, 3, 3, 9, 1, 5, 11, 2, 3, 7, 1, 9, 13, 3, 1, 11, 5, 3, 9]
+
+
+## Store art: builds the two cards it shows as rotated children (see _draw_art for the rest).
+func _build_art() -> void:
+	var classic: Array = []
+	for n in [8, 4, 1, 5]:
+		classic.append({"v": Vector2i(n, 1), "e": "", "label": ""})
+	var double: Array = []
+	for n in [14, 1, 12, 9, 3, 8]:
+		double.append({"v": Vector2i(n, 1), "e": "", "label": ""})
+	var place := {
+		"box": [[Vector2(318, 610), 215.0, -0.12], [Vector2(762, 590), 215.0, 0.12]],
+		"poster": [[Vector2(250, 560), 170.0, -0.12], [Vector2(478, 760), 185.0, 0.1]],
+		"hero": [[Vector2(1235, 575), 255.0, -0.12], [Vector2(1625, 530), 265.0, 0.1]],
+	}
+	var spots: Array = place[art.kind]
+	for i in 2:
+		var card: Node2D = get_script().new()
+		card.art_card = {"tiles": classic if i == 0 else double, "h": spots[i][1], "dots": 3 if i == 0 else 2}
+		card.position = spots[i][0]
+		card.rotation = spots[i][2]
+		add_child(card)
+
+
+func _draw_art() -> void:
+	var size: Vector2 = art.size
+	# Deep blue with a soft diagonal shine, like the printed Pro cards.
+	var rows := 64
+	for i in rows:
+		var t := float(i) / (rows - 1)
+		draw_rect(Rect2(0, size.y * i / rows, size.x, size.y / rows + 1.0), Color("2e2da3").lerp(Color("0f0e45"), t))
+	for i in 18:
+		var w := size.length() * (0.5 - i * 0.025)
+		var shine := PackedVector2Array([Vector2(size.x * 0.1 - w * 0.2, size.y), Vector2(size.x * 0.1 + w * 0.2, size.y),
+				Vector2(size.x * 0.95 + w * 0.2, 0), Vector2(size.x * 0.95 - w * 0.2, 0)])
+		draw_colored_polygon(shine, Color(1, 1, 1, 0.012))
+	var tagline: String = STORE_TAGLINE.get(TranslationServer.get_locale(), STORE_TAGLINE.en)
+	match art.kind:
+		"box":
+			_draw_logo(Vector2(size.x / 2, 150), 1.45, Color.WHITE, size.x - 120.0)
+			_para(tagline, Rect2(90, 905, size.x - 180, 140), 38, Color("fff3cf"))
+		"poster":
+			_draw_logo(Vector2(size.x / 2, 140), 1.1, Color.WHITE, size.x - 80.0)
+			_para(tagline, Rect2(60, 960, size.x - 120, 110), 30, Color("fff3cf"))
+		"hero":
+			_draw_logo(Vector2(500, 420), 1.6, Color.WHITE, 760.0)
+			_para(tagline, Rect2(110, 520, 780, 200), 44, Color("fff3cf"))
 
 
 ## Windows .ico with PNG images at several sizes.
@@ -1008,6 +1191,8 @@ func _load() -> void:
 
 
 func _save() -> void:
+	if store_shot:
+		return
 	var config := ConfigFile.new()
 	config.set_value("settings", "level", level)
 	config.set_value("settings", "mode", mode)

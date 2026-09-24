@@ -132,8 +132,14 @@ const TEXT := {
 }
 
 
-## Registers all languages with Godot's TranslationServer.
+static var installed := false
+
+
+## Registers all languages with Godot's TranslationServer (once).
 static func install() -> void:
+	if installed:
+		return
+	installed = true
 	for i in LANGUAGES.size():
 		var translation := Translation.new()
 		translation.locale = LANGUAGES[i][0]
