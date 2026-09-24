@@ -1,15 +1,19 @@
 extends Node2D
 ## 24 Game Pro (Jogo do 24 Pro): combine the four numbers on the card with + − × ÷ until one is left. Reach exactly 24 to win.
 ## Double Cards mode deals a figure-8 card with six numbers, and all six must be used.
+## Progress (scripts/progress.gd) turns play into brain training: a daily streak, brain points, levels and badges.
 ## Click a number, an operation, then another number (or use the arrow keys for the numbers, + - * / for the
 ## operations). U / Backspace undoes, N starts a new game, Esc goes back. Statistics are kept per difficulty.
 
 const SolverScript := preload("res://scripts/solver.gd")
 const SfxScript := preload("res://scripts/sfx.gd")
 const StringsScript := preload("res://scripts/strings.gd")
+const ProgressScript := preload("res://scripts/progress.gd")
 
 const SCREEN := Vector2(1000, 720)
 const SAVE_PATH := "user://jogo24.cfg"
+const TIP_COUNT := 4  # brain tips "tip_1".."tip_4", one per day
+const TOAST_TIME := 3.4
 const MAX_RESULTS := 500
 
 ## Difficulty levels: number range and the operations that may be needed.
@@ -62,7 +66,7 @@ const DOUBLE_D := 0.46
 const STRIPE := Color("f8a9ba")
 const DIGIT := Color("15142e")
 
-var screen := "menu"  # "menu", "game", "stats" or "settings"
+var screen := "menu"  # "menu", "game", "stats", "settings" or "progress"
 var level := 0
 var mode := 0  # index into MODES
 var language := ""
@@ -81,6 +85,10 @@ var solution_text := ""
 var elapsed := 0.0
 var results: Array = []  # mode * 8 + level * 2 + (1 if won), oldest first
 var confirm_clear := false
+var progress = ProgressScript.new()
+var solution_seen := false  # the solution was viewed this round: half points, no bonuses
+var reward := {}  # what the last finished card earned (see progress.gd record_round)
+var toasts: Array = []  # milestone messages shown one after another at the top: {"text", "t"}
 
 var hover := ""
 var focused := true
@@ -194,6 +202,8 @@ func _deal() -> void:
 	over = false
 	status = {"key": "status_start", "arg": ""}
 	solution_text = ""
+	solution_seen = false
+	reward = {}
 	elapsed = 0.0
 	confetti.clear()
 
@@ -308,6 +318,7 @@ func _undo() -> void:
 
 func _show_solution() -> void:
 	var found := SolverScript.solve_numbers(original, LEVELS[level].ops)
+	solution_seen = true
 	solution_text = tr("solution_found") % found if found != "" else tr("solution_none")
 	_play("op")
 
@@ -345,7 +356,32 @@ func _record(won: bool) -> void:
 	results.append(mode * 8 + level * 2 + (1 if won else 0))
 	if results.size() > MAX_RESULTS:
 		results = results.slice(results.size() - MAX_RESULTS)
+	reward = progress.record_round(won, level, mode, elapsed, solution_seen, ProgressScript.today())
+	for event: Dictionary in reward.events:
+		_toast(_event_text(event))
 	_save()
+
+
+func _event_text(event: Dictionary) -> String:
+	match event.kind:
+		"first_day":
+			return tr("toast_first_day")
+		"streak":
+			return tr("toast_streak") % event.days
+		"week":
+			return tr("toast_week")
+		"goal":
+			return tr("goal_done")
+		"badge":
+			return tr("toast_badge") % tr("b_" + event.id)
+		"rank":
+			return tr("toast_rank") % tr(event.key)
+	return ""
+
+
+func _toast(text: String) -> void:
+	if text != "":
+		toasts.append({"text": text, "t": 0.0})
 
 
 func _summary() -> Dictionary:
@@ -386,8 +422,12 @@ func _buttons() -> Array:
 				list.append(_btn("mode%d" % i, Rect2(560 + i * 195, 226, 185, 46), tr(MODES[i].key), "ghost", true, mode == i, 19))
 			for i in LEVELS.size():
 				list.append(_btn("lvl%d" % i, Rect2(560, 320 + i * 76, 380, 64), tr(LEVELS[i].key), "level", true, false, 26))
-			list.append(_btn("stats", Rect2(560, 640, 185, 52), tr("statistics"), "ghost", true, false, 18))
-			list.append(_btn("settings", Rect2(755, 640, 185, 52), tr("settings"), "ghost", true, false, 18))
+			list.append(_btn("stats", Rect2(560, 640, 122, 52), tr("statistics"), "ghost", true, false, 18))
+			list.append(_btn("progress", Rect2(689, 640, 122, 52), tr("progress"), "ghost", true, false, 18))
+			list.append(_btn("settings", Rect2(818, 640, 122, 52), tr("settings"), "ghost", true, false, 18))
+			var today := ProgressScript.today()
+			list.append(_btn("streak", Rect2(24, 22, 150, 52), str(progress.current_streak(today)), "chip", true, false, 24))
+			list.append(_btn("points", Rect2(SCREEN.x - 174, 22, 150, 52), str(progress.points), "chip", true, false, 24))
 		"game":
 			list.append(_btn("back", Rect2(24, 20, 130, 48), tr("menu"), "ghost", true, false, 20))
 			var allowed: Array = LEVELS[level].ops
@@ -398,6 +438,8 @@ func _buttons() -> Array:
 			list.append(_btn("undo", Rect2(660, 512, 158, 52), tr("undo"), "ghost", not history.is_empty() and not over, false, 19))
 			list.append(_btn("solution", Rect2(828, 512, 158, 52), tr("view_solution"), "ghost", true, false, 19))
 			list.append(_btn("new", Rect2(660, 576, 326, 62), tr("next_game") if over else tr("new_game"), "good" if over else "primary", true, false, 24))
+		"progress":
+			list.append(_btn("back", Rect2(24, 20, 130, 48), tr("menu"), "ghost", true, false, 20))
 		"stats":
 			list.append(_btn("back", Rect2(24, 20, 130, 48), tr("menu"), "ghost", true, false, 20))
 			var label := tr("confirm_clear") if confirm_clear else tr("clear_stats")
@@ -479,6 +521,9 @@ func _press(id: String) -> void:
 				_play("select")
 			"stats":
 				screen = "stats"
+				_play("select")
+			"progress", "streak", "points":
+				screen = "progress"
 				_play("select")
 			"settings":
 				screen = "settings"
@@ -596,6 +641,10 @@ func _process(delta: float) -> void:
 		piece.v.y += 700.0 * delta
 		piece.p += piece.v * delta
 		piece.a += piece.spin * delta
+	if not toasts.is_empty():
+		toasts[0].t += delta
+		if toasts[0].t > TOAST_TIME:
+			toasts.pop_front()
 	confetti = confetti.filter(func(piece: Dictionary) -> bool: return piece.p.y < SCREEN.y + 20.0)
 	queue_redraw()
 
@@ -630,7 +679,10 @@ func _draw() -> void:
 			_draw_stats()
 		"settings":
 			_draw_settings()
-	for piece: Dictionary in confetti:
+		"progress":
+			_draw_progress()
+	_draw_toast()
+	for piece: Dictionary in confetti if screen == "game" else []:
 		draw_set_transform(piece.p, piece.a)
 		draw_rect(Rect2(-piece.s * 0.5, -piece.s * 0.3, piece.s, piece.s * 0.6), piece.c)
 	draw_set_transform(Vector2.ZERO)
@@ -660,7 +712,21 @@ func _draw_game() -> void:
 	_draw_card(CARD_CENTER, CARD_RADIUS, slots, first, hover, level + 1)
 	var status_color := GREEN if over else (RED if status.key == "status_wrong" or status.key == "status_div0" else INK)
 	_para(_status_text(), Rect2(660, 110, 326, 96), 22, status_color, HORIZONTAL_ALIGNMENT_LEFT, true)
-	if solution_text != "":
+	if over and reward.get("points", 0) > 0:
+		# What the win earned, right under the result.
+		_star(Vector2(674, 232), 13.0, YELLOW)
+		_text(tr("reward_total") % reward.points, Vector2(694, 232), 22, GREEN, 0, true)
+		var parts := PackedStringArray()
+		for part: Array in reward.parts:
+			parts.append("%s +%d" % [tr(part[0]), part[1]])
+		if reward.helped:
+			parts.append(tr("r_helped"))
+		if reward.capped:
+			parts.append(tr("r_capped"))
+		_para("  ·  ".join(parts), Rect2(660, 248, 326, 40), 14, MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	elif over and reward.get("capped", false):
+		_para(tr("r_capped"), Rect2(660, 222, 326, 60), 16, MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	elif solution_text != "":
 		_para(solution_text, Rect2(660, 222, 326, 60), 18, MUTED, HORIZONTAL_ALIGNMENT_LEFT)
 
 
@@ -730,6 +796,146 @@ func _draw_stats() -> void:
 			_round(rect.grow(-3), 8, Color.TRANSPARENT, YELLOW, 3)
 		_text(str((recent[i] % 8) / 2 + 1), rect.get_center(), 20, Color.WHITE, 1, true)
 	_text(tr("won_lost_hint"), Vector2(30, 614), 16, MUTED, 0)
+
+
+## Brain training: the daily streak, points and level, the 7-day challenge, the daily goal, badges,
+## a brain tip of the day and how points are earned.
+func _draw_progress() -> void:
+	for b: Dictionary in _buttons():
+		_draw_button(b)
+	_text(tr("progress"), Vector2(SCREEN.x / 2, 44), 34, NAVY, 1, true)
+	var today := ProgressScript.today()
+	var days: int = progress.current_streak(today)
+	# Streak, points and level.
+	var boxes := [Rect2(30, 88, 300, 112), Rect2(350, 88, 300, 112), Rect2(670, 88, 300, 112)]
+	for rect: Rect2 in boxes:
+		_round(rect, 16, Color.WHITE, LINE, 1)
+	_flame(Vector2(72, 138), 24.0, days > 0)
+	_text(str(days), Vector2(110, 126), 46, NAVY, 0, true)
+	_text(tr("daily_streak"), Vector2(110, 162), 17, MUTED, 0)
+	_text(tr("best_days") % progress.best_streak, Vector2(110, 184), 14, MUTED, 0)
+	_star(Vector2(392, 138), 24.0, YELLOW)
+	_text(str(progress.points), Vector2(430, 126), 46, NAVY, 0, true)
+	_text(tr("brain_points"), Vector2(430, 162), 17, MUTED, 0)
+	var today_points: int = progress.points_today(today)
+	var full := today_points >= ProgressScript.DAILY_CAP
+	_text(tr("today_points") % [today_points, ProgressScript.DAILY_CAP], Vector2(430, 184), 14, GREEN if full else MUTED, 0, full)
+	var rank_name := tr(ProgressScript.rank_key(progress.rank_index()))
+	_text(rank_name, Vector2(690, 116), _fit(rank_name, bold, 22, 260), NAVY, 0, true)
+	_text(tr("brain_level") + "  %d" % (progress.rank_index() + 1), Vector2(690, 142), 15, MUTED, 0)
+	var bar := Rect2(690, 156, 260, 12)
+	_round(bar, 6, Color("e4e7ec"))
+	_round(Rect2(bar.position, Vector2(maxf(bar.size.x * progress.rank_progress(), 12.0), bar.size.y)), 6, YELLOW)
+	_text(tr("next_level") % progress.points_to_next(), Vector2(690, 184), 14, MUTED, 0)
+	# The 7-day challenge: one circle per day of the current week of the streak.
+	var week := Rect2(30, 214, 620, 100)
+	_round(week, 16, Color.WHITE, LINE, 1)
+	_text(tr("week_challenge"), Vector2(50, 236), 20, INK, 0, true)
+	_text(tr("week_desc"), Vector2(50, 258), 14, MUTED, 0)
+	var filled := days % ProgressScript.WEEK
+	if days > 0 and filled == 0:
+		filled = ProgressScript.WEEK
+	for i in ProgressScript.WEEK:
+		var at := Vector2(68 + i * 58, 290)
+		if i < filled:
+			draw_circle(at, 17.0, NAVY)
+			draw_circle(at, 14.0, YELLOW)
+			_text(str(i + 1), at, 17, NAVY, 1, true)
+		else:
+			draw_circle(at, 17.0, Color("e4e7ec"))
+			_text(str(i + 1), at, 17, MUTED, 1, true)
+	_flame(Vector2(500, 290), 18.0, filled == ProgressScript.WEEK)
+	_text("+%d" % ProgressScript.WEEK_BONUS, Vector2(526, 290), 20, NAVY if filled == ProgressScript.WEEK else MUTED, 0, true)
+	# Daily goal.
+	var goal := Rect2(670, 214, 300, 100)
+	_round(goal, 16, Color.WHITE, LINE, 1)
+	var solved: int = progress.goal_progress(today)
+	_text(tr("daily_goal"), Vector2(690, 236), 20, INK, 0, true)
+	var done: bool = solved >= ProgressScript.DAILY_GOAL
+	_text(tr("goal_done") if done else tr("daily_goal_desc") % ProgressScript.DAILY_GOAL, Vector2(690, 258), 14, GREEN if done else MUTED, 0, done)
+	var goal_bar := Rect2(690, 282, 200, 14)
+	_round(goal_bar, 7, Color("e4e7ec"))
+	if solved > 0:
+		_round(Rect2(goal_bar.position, Vector2(goal_bar.size.x * mini(solved, ProgressScript.DAILY_GOAL) / ProgressScript.DAILY_GOAL, goal_bar.size.y)), 7, GREEN)
+	_text("%d/%d" % [mini(solved, ProgressScript.DAILY_GOAL), ProgressScript.DAILY_GOAL], Vector2(904, 289), 17, NAVY, 0, true)
+	# Badges.
+	_text(tr("badges") + "  %d/%d" % [progress.badges.size(), ProgressScript.BADGES.size()], Vector2(30, 338), 20, INK, 0, true)
+	for i in ProgressScript.BADGES.size():
+		var id: String = ProgressScript.BADGES[i]
+		var tile := Rect2(30 + (i % 3) * 320, 356 + (i / 3) * 92, 300, 82)
+		var earned: bool = progress.badges.has(id)
+		_round(tile, 14, Color.WHITE if earned else Color("f7f8fa"), LINE, 1)
+		_badge_icon(tile.position + Vector2(42, 41), id, earned)
+		var name := tr("b_" + id)
+		_text(name, tile.position + Vector2(84, 24), _fit(name, bold, 17, 206), NAVY if earned else MUTED, 0, true)
+		_para(tr("b_" + id + "_desc"), Rect2(tile.position + Vector2(84, 38), Vector2(206, 40)), 13, MUTED, HORIZONTAL_ALIGNMENT_LEFT)
+	# Brain tip of the day and how points work.
+	var bottom := Rect2(30, 548, 940, 156)
+	_round(bottom, 16, Color("fff8e6"), Color(YELLOW, 0.6), 1)
+	_text(tr("tip_title"), Vector2(50, 570), 18, NAVY, 0, true)
+	_para(tr("tip_%d" % (today % TIP_COUNT + 1)), Rect2(50, 584, 410, 110), 16, INK, HORIZONTAL_ALIGNMENT_LEFT)
+	_text(tr("points_title"), Vector2(490, 570), 18, NAVY, 0, true)
+	_para(tr("points_rules"), Rect2(490, 582, 470, 120), 14, INK, HORIZONTAL_ALIGNMENT_LEFT)
+
+
+## The biggest font size up to `size` at which `s` fits in `width`.
+func _fit(s: String, f: Font, size: int, width: float) -> int:
+	while size > 10 and f.get_string_size(s, HORIZONTAL_ALIGNMENT_LEFT, -1, size).x > width:
+		size -= 1
+	return size
+
+
+## A badge's round icon, in the card's colors when earned and grey while locked.
+func _badge_icon(c: Vector2, id: String, earned: bool) -> void:
+	draw_circle(c, 29.0, YELLOW if earned else Color("d9dde3"))
+	draw_circle(c, 25.0, NAVY if earned else Color("eceef2"))
+	var color := YELLOW if earned else Color("a3abb6")
+	match id:
+		"expert":
+			for i in 4:
+				draw_circle(c + Vector2(-13.5 + i * 9.0, 0), 3.6, color)
+		_:
+			var label: String = {"first": "24", "week": "7", "quick": "20s", "solo": "10", "double": "2×"}[id]
+			_text(label, c, 20 if label.length() < 3 else 16, color, 1, true, numfont)
+
+
+## Milestone message sliding in at the top of the screen.
+func _draw_toast() -> void:
+	if toasts.is_empty():
+		return
+	var t: float = toasts[0].t
+	var text: String = toasts[0].text
+	var slide := clampf(t / 0.25, 0.0, 1.0)
+	var fade := clampf((TOAST_TIME - t) / 0.35, 0.0, 1.0)
+	var width := bold.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, 21).x + 84.0
+	# Over the card while playing, so the side panel stays readable.
+	var center_x := CARD_CENTER.x if screen == "game" else SCREEN.x / 2
+	var rect := Rect2(center_x - width / 2, lerpf(-70.0, 86.0, ease(slide, 0.4)), width, 56)
+	_round(Rect2(rect.position + Vector2(0, 5), rect.size), 28, Color(0, 0, 0, 0.18 * fade))
+	_round(rect, 28, Color(NAVY, fade), Color(YELLOW, fade), 3)
+	_star(rect.position + Vector2(32, 28), 14.0, Color(YELLOW, fade))
+	_text(text, rect.position + Vector2(54, 28), 21, Color(CREAM, fade), 0, true)
+
+
+## Five-pointed star (points).
+func _star(c: Vector2, r: float, color: Color) -> void:
+	var points := PackedVector2Array()
+	for i in 10:
+		var angle := -PI / 2.0 + i * PI / 5.0
+		points.append(c + Vector2.from_angle(angle) * (r if i % 2 == 0 else r * 0.45))
+	draw_colored_polygon(points, color)
+
+
+## Flame (daily streak): orange with a yellow core when the streak is alive, grey when not.
+func _flame(c: Vector2, s: float, lit: bool) -> void:
+	var outer := Color("f07c2a") if lit else Color("c4c9d2")
+	var inner := YELLOW if lit else Color("e4e7ec")
+	for layer in 2:
+		var k := 1.0 if layer == 0 else 0.55
+		var base := c + Vector2(0, s * 0.3 + (1.0 - k) * s * 0.35)
+		draw_circle(base, s * 0.55 * k, outer if layer == 0 else inner)
+		draw_colored_polygon(PackedVector2Array([base + Vector2(-s * 0.53 * k, -s * 0.1 * k), base + Vector2(s * 0.1 * k, -s * 1.3 * k),
+				base + Vector2(s * 0.53 * k, -s * 0.1 * k)]), outer if layer == 0 else inner)
 
 
 ## The traditional card: navy square, yellow disc, four red pinstriped arms around a white square, the
@@ -863,6 +1069,16 @@ func _draw_button(b: Dictionary) -> void:
 		fill = Color("eceef2")
 		text_color = Color(text_color, 0.35)
 		border = Color(0, 0, 0, 0.08)
+	if b.kind == "chip":
+		# Streak / points counter on the menu: an icon and a number, opens Progress.
+		_round(rect, rect.size.y * 0.5, fill, border, 1)
+		var icon_at := rect.position + Vector2(32, rect.size.y * 0.5)
+		if b.id == "streak":
+			_flame(icon_at, 16.0, int(b.label) > 0)
+		else:
+			_star(icon_at, 16.0, YELLOW)
+		_text(b.label, rect.position + Vector2(58, rect.size.y * 0.5), b.size, NAVY, 0, true)
+		return
 	_round(rect, 16 if b.kind != "op" else 22, fill, border, 2 if b.kind == "op" and enabled else 1)
 	if b.kind == "level":
 		var band := Rect2(rect.position + Vector2(14, 14), Vector2(8, rect.size.y - 28))
@@ -1019,7 +1235,7 @@ func _render_store() -> void:
 			for half in 2:
 				img.save_png("%s/%s.%dx%d.png" % [folder, spec[0], img.get_width(), img.get_height()])
 				img.resize(img.get_width() / 2, img.get_height() / 2, Image.INTERPOLATE_LANCZOS)
-		for shot in 5:
+		for shot in 6:
 			var game: Node2D = get_script().new()
 			game.store_shot = true
 			game.sound_on = false
@@ -1050,8 +1266,12 @@ func _snap(node: Node2D, size: Vector2i, zoom: float, frames: int, setup := Call
 	return img
 
 
-## Puts a screenshot copy of the game in a real moment of play.
+## Puts a screenshot copy of the game in a real moment of play, with the progress of a player on a
+## 12-day streak (brain level 5, four badges).
 func _stage(game: Node2D, shot: int) -> void:
+	var today := ProgressScript.today()
+	game.progress.from_dict({"points": 8450, "streak": 12, "best_streak": 12, "last_day": today, "goal_day": today, "goal_count": 2,
+			"solo_wins": 8, "badges": ["first", "week", "quick", "double"], "day_points": 180, "day_points_day": today})
 	match shot:
 		0:  # Classic, Hard: disguised numbers, the first number and × picked.
 			game.mode = 0
@@ -1085,13 +1305,18 @@ func _stage(game: Node2D, shot: int) -> void:
 			game.over = true
 			game.status = {"key": "status_win", "arg": ""}
 			game.elapsed = 48.0
+			game.reward = {"points": 50, "parts": [["r_solved", 20], ["r_fast", 5], ["r_solo", 5], ["daily_goal", 20]], "helped": false,
+					"capped": false, "events": []}
+			game._toast(game.tr("goal_done"))
 			game._start_confetti()
-		3:  # The menu with Double Cards picked.
+		3:  # Progress: the daily streak, brain points and level, badges and the brain tip.
+			game.screen = "progress"
+		4:  # The menu with Double Cards picked.
 			game.mode = 1
 			game.screen = "menu"
 			game.original = [14, 1, 12, 9, 3, 8]
 			game.hover = "lvl2"
-		4:  # Statistics after a good run.
+		5:  # Statistics after a good run.
 			game.screen = "stats"
 			game.results = [0, 1, 3, 3, 9, 1, 5, 11, 2, 3, 7, 1, 9, 13, 3, 1, 11, 5, 3, 9]
 
@@ -1183,6 +1408,9 @@ func _load() -> void:
 	language = str(config.get_value("settings", "language", ""))
 	sound_on = bool(config.get_value("settings", "sound", true))
 	volume = clampf(float(config.get_value("settings", "volume", 1.0)), 0.0, 1.0)
+	var saved_progress: Variant = config.get_value("progress", "data", {})
+	if saved_progress is Dictionary:
+		progress.from_dict(saved_progress)
 	var saved: Variant = config.get_value("stats", "results", [])
 	if saved is Array:
 		for code in saved:
@@ -1200,4 +1428,5 @@ func _save() -> void:
 	config.set_value("settings", "sound", sound_on)
 	config.set_value("settings", "volume", volume)
 	config.set_value("stats", "results", results)
+	config.set_value("progress", "data", progress.to_dict())
 	config.save(SAVE_PATH)

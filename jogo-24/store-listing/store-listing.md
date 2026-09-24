@@ -39,19 +39,20 @@ Rendered in-engine from the game's own drawing code, icon and fonts — no exter
 | `AppTile.300x300.png`, `AppTile.150x150.png`, `AppTile.71x71.png` | Store logos: 1:1 app tile icon (optional; top level only, same for both languages) |
 | `screenshot.png` | Desktop screenshot: a Classic card on Hard, with √36 and 9/3 disguising two numbers, the first number and × picked |
 | `screenshot-2.png` | Desktop screenshot: Double Cards on Medium, the figure-eight card with six numbers |
-| `screenshot-3.png` | Desktop screenshot: a Medium card just solved, with confetti and the Next Game button |
-| `screenshot-4.png` | Desktop screenshot: the main menu with Double Cards picked and the four difficulty levels |
-| `screenshot-5.png` | Desktop screenshot: the Statistics screen, with totals, results by difficulty and recent history |
+| `screenshot-3.png` | Desktop screenshot: a Medium card just solved, with confetti, +50 brain points and the "Daily goal done!" message |
+| `screenshot-4.png` | Desktop screenshot: the Progress screen: a 12-day streak, brain points, brain level, the 7-day challenge, the daily goal, badges and the brain tip of the day |
+| `screenshot-5.png` | Desktop screenshot: the main menu with the streak and points counters, Double Cards picked and the four difficulty levels |
+| `screenshot-6.png` | Desktop screenshot: the Statistics screen, with totals, results by difficulty and recent history |
 
-All screenshots are real gameplay at 2000x1440 (the game's 1000x720 window at twice the size).
+All screenshots are real gameplay at 2000x1440 (the game's 1000x720 window at twice the size). They show a player with a 12-day streak on brain level 5 (Math Strategist) with four badges; the renderer sets that progress in `_stage()` in `scripts/main.gd` and never touches the real save file.
 
 ## English (en) — 24 Game Pro
 
 ### Short description (recommended, up to 1,000 characters; keep under 270 for best display)
 
-A quick math puzzle: combine four numbers with +, −, × and ÷ to make exactly 24. Four difficulty levels, disguised numbers on the hard levels, and the new Double Cards mode with six numbers to use.
+A daily math workout: combine four numbers with +, −, × and ÷ to make exactly 24. Keep your daily streak, earn brain points, unlock badges and climb ten brain levels, in Classic or the new Double Cards mode.
 
-(197 characters)
+(207 characters)
 
 ### Description (required, up to 10,000 characters)
 
@@ -61,9 +62,11 @@ Double Cards mode deals a figure-eight card with six numbers, and all six must b
 
 Choose from four difficulty levels, from Easy to Very Hard, shown by the dots in the corners of every card. On Hard and Very Hard some numbers are disguised as square roots or unreduced fractions, so you have to work out their real value first. Every card dealt can be solved, and if you get stuck you can undo any move or view a possible solution.
 
-A round timer and full statistics keep track of your wins, win rate, current and best streak, results for each difficulty and your recent games. Play with the mouse or the keyboard. The game is available in English, Portuguese, Spanish, French, German, Italian, Dutch, Polish and Swedish, with adjustable sound effects and volume. No ads and no in-app purchases.
+Train your brain every day. Each solved card earns brain points, with bonuses for speed, for solving without help and for keeping your daily streak alive. Play seven days in a row to complete the 7-day challenge, meet the daily goal of three cards, unlock badges and climb ten brain levels, from Curious Mind to Brain Champion. The levels are built for the long run: up to 500 points count each day, so steady daily practice matters more than long sessions, and reaching Brain Champion takes about a year of daily play.
 
-(1,153 characters)
+A round timer and full statistics keep track of your wins, win rate, current and best streak, results for each difficulty and your recent games. Play with the mouse or the keyboard. The game is available in English, Portuguese, Spanish, French, German, Italian, Dutch, Polish and Swedish, with adjustable sound effects and volume.
+
+(1,642 characters)
 
 ### Product features (200 characters per feature, 20 max — Store adds bullets automatically, do not add your own)
 
@@ -71,17 +74,19 @@ A round timer and full statistics keep track of your wins, win rate, current and
 2. Double Cards mode: a figure-eight card with six numbers, all of them to be used
 3. Four difficulty levels, with square roots and fractions disguising numbers on the hard levels
 4. Every card can be solved, with Undo and a View Solution button when you are stuck
-5. Round timer and statistics: wins, win rate, streaks, results by difficulty and recent games
-6. Traditional card design with the numbers, red arms and difficulty dots of the printed game
-7. Play in 9 languages, with sound effect and volume settings
+5. Daily brain training: keep your streak going and complete the 7-day challenge for bonus points
+6. Earn brain points, meet the daily goal, unlock six badges and climb ten brain levels
+7. Round timer and statistics: wins, win rate, streaks, results by difficulty and recent games
+8. Traditional card design with the numbers, red arms and difficulty dots of the printed game
+9. Play in 9 languages, with sound effect and volume settings
 
 ## Portuguese (pt) — Jogo do 24 Pro
 
 ### Descrição curta (recomendado, até 1000 carateres; manter abaixo de 270 para melhor exibição)
 
-Um puzzle matemático rápido: combina quatro números com +, −, × e ÷ para fazer exatamente 24. Quatro níveis de dificuldade, números disfarçados nos níveis difíceis e o novo modo Cartas Duplas, com seis números para usar.
+Um treino diário de matemática: combina quatro números com +, −, × e ÷ para fazer exatamente 24. Mantém os dias seguidos, ganha pontos mentais, desbloqueia medalhas e sobe dez níveis mentais, no modo Clássico ou Cartas Duplas.
 
-(220 carateres)
+(226 carateres)
 
 ### Descrição (obrigatório, até 10 000 carateres)
 
@@ -91,9 +96,11 @@ O modo Cartas Duplas dá-te uma carta em forma de oito com seis números, e tens
 
 Escolhe entre quatro níveis de dificuldade, do Fácil ao Muito Difícil, indicados pelos pontos nos cantos de cada carta. No Difícil e no Muito Difícil alguns números aparecem disfarçados como raízes quadradas ou frações não simplificadas, por isso tens de descobrir primeiro o seu valor real. Todas as cartas têm solução, e se ficares bloqueado podes desfazer qualquer jogada ou ver uma solução possível.
 
-Um cronómetro e estatísticas completas registam as tuas vitórias, a taxa de vitória, a sequência atual e a melhor, os resultados por dificuldade e os teus jogos recentes. Joga com o rato ou o teclado. O jogo está disponível em português, inglês, espanhol, francês, alemão, italiano, neerlandês, polaco e sueco, com efeitos sonoros e volume ajustáveis. Sem anúncios nem compras na aplicação.
+Treina o cérebro todos os dias. Cada carta resolvida dá pontos mentais, com bónus pela rapidez, por resolveres sem ajuda e por manteres os dias seguidos. Joga sete dias seguidos para completar o desafio de 7 dias, cumpre o objetivo diário de três cartas, desbloqueia medalhas e sobe dez níveis mentais, de Mente Curiosa a Campeão Mental. Os níveis são feitos para durar: contam até 500 pontos por dia, por isso a prática diária vale mais do que sessões longas, e chegar a Campeão Mental leva cerca de um ano de jogo diário.
 
-(1263 carateres)
+Um cronómetro e estatísticas completas registam as tuas vitórias, a taxa de vitória, a sequência atual e a melhor, os resultados por dificuldade e os teus jogos recentes. Joga com o rato ou o teclado. O jogo está disponível em português, inglês, espanhol, francês, alemão, italiano, neerlandês, polaco e sueco, com efeitos sonoros e volume ajustáveis.
+
+(1749 carateres)
 
 ### Funcionalidades do produto (200 carateres por funcionalidade, 20 no máximo — a Store adiciona os marcadores automaticamente, não acrescentes os teus)
 
@@ -101,6 +108,8 @@ Um cronómetro e estatísticas completas registam as tuas vitórias, a taxa de v
 2. Modo Cartas Duplas: uma carta em forma de oito com seis números, todos para usar
 3. Quatro níveis de dificuldade, com raízes quadradas e frações a disfarçar números nos níveis difíceis
 4. Todas as cartas têm solução, com Desfazer e um botão Ver Solução quando ficas bloqueado
-5. Cronómetro e estatísticas: vitórias, taxa de vitória, sequências, resultados por dificuldade e jogos recentes
-6. Design tradicional das cartas, com os números, os braços vermelhos e os pontos de dificuldade do jogo impresso
-7. Joga em 9 idiomas, com definições de efeitos sonoros e volume
+5. Treino mental diário: mantém os dias seguidos e completa o desafio de 7 dias para ganhar pontos extra
+6. Ganha pontos mentais, cumpre o objetivo diário, desbloqueia seis medalhas e sobe dez níveis mentais
+7. Cronómetro e estatísticas: vitórias, taxa de vitória, sequências, resultados por dificuldade e jogos recentes
+8. Design tradicional das cartas, com os números, os braços vermelhos e os pontos de dificuldade do jogo impresso
+9. Joga em 9 idiomas, com definições de efeitos sonoros e volume
