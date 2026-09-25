@@ -14,6 +14,7 @@ config/name="Old Flags"
 run/main_scene="res://common/intro/intro.tscn"
 config/features=PackedStringArray("4.7")
 config/icon="res://icon.png"
+config/windows_native_icon="res://icon.ico"
 config/quit_on_go_back=false
 boot_splash/show_image=false
 boot_splash/bg_color=Color(0, 0, 0, 1)

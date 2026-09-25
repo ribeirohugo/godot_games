@@ -434,6 +434,8 @@ func _add_logo() -> void:
 	var view := get_viewport_rect().size
 	var logo := TextureRect.new()
 	logo.texture = preload("res://icon.png")
+	# The image is much bigger than it's shown: mipmaps keep it smooth instead of pixelated.
+	logo.texture_filter = CanvasItem.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
 	var share := 0.2 if screen == "menu" else 0.14
