@@ -4,3 +4,7 @@ build/
 # Copies of the root common\ folders, made by _config.bat.
 /*/common/intro/
 /*/common/fonts/
+
+# Local only, not published.
+/roleta-pro/
+/slot-machine-pro/
