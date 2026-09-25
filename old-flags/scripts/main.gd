@@ -23,6 +23,8 @@ const STICK_DEADZONE := 0.25
 const TYPES := ["old", "classic"]
 const MODES := ["name", "flag"]  # "name": see the flag, pick the name. "flag": see the name, pick the flag
 const DIFFICULTIES := ["all", "easy", "medium", "hard"]  # only for "old"
+const MENU_SCREENS := ["menu", "mode", "difficulty", "help", "stats", "settings"]  # the ones with the bottom bar
+const TABS := [["home", "menu"], ["play", "mode"], ["stats", "stats"], ["settings", "settings"]]  # [id, screen]
 
 # A vintage palette: aged paper, bronze and oxidized ink.
 const BG := Color("f3e9d2")
@@ -40,6 +42,7 @@ const TAN_HOVER := Color("f8f0da")
 const TAN_DARK := Color("c9b998")
 const GREEN := Color("5c7a52")
 const RED := Color("8c3a3a")
+const BAR := Color("ebdcb9")  # bottom bar, a shade under the page
 
 # Settings and choices, saved.
 var language := ""
@@ -73,11 +76,14 @@ var font: Font
 var bold: Font
 var ui_theme: Theme
 var focus_style: StyleBox
+var tab_focus_style: StyleBox
 var textures := {}
 var sfx
 
 var ui_root: Control
 var scroll: ScrollContainer
+var bar: PanelContainer  # bottom bar of the menu screens, outside the scrolling page
+var bar_row: HBoxContainer
 var margin: MarginContainer
 var page: VBoxContainer
 var buttons := {}  # id -> Button on the current page, to find the focus again after a rebuild
@@ -197,6 +203,23 @@ func _build_theme() -> void:
 	for item in ["font_color", "font_hover_color", "font_pressed_color", "font_hover_pressed_color", "font_focus_color"]:
 		t.set_color(item, "Primary", SEPIA_DARK)
 
+	# Bottom bar, as in the original app: icon over a small label, muted, the current tab in gold.
+	t.set_type_variation("Tab", "Button")
+	var flat := StyleBoxEmpty.new()
+	for item in ["normal", "pressed", "hover_pressed", "disabled"]:
+		t.set_stylebox(item, "Tab", flat)
+	t.set_stylebox("hover", "Tab", _box(Color(SEPIA, 0.05), Color.TRANSPARENT, 0, 0, Vector2.ZERO))
+	tab_focus_style = _box(Color.TRANSPARENT, GOLD_DARK, 2, 8)
+	tab_focus_style.draw_center = false
+	tab_focus_style.set_expand_margin_all(-4)
+	t.set_stylebox("focus", "Tab", tab_focus_style if nav_active else StyleBoxEmpty.new())
+	var bar_style := _box(BAR, TAN_DARK, 0, 0, Vector2.ZERO)
+	bar_style.border_width_top = 1
+	bar_style.shadow_color = Color(SEPIA, 0.08)
+	bar_style.shadow_size = 8
+	t.set_type_variation("Bar", "PanelContainer")
+	t.set_stylebox("panel", "Bar", bar_style)
+
 	t.set_type_variation("Small", "Button")
 	t.set_font_size("font_size", "Small", 19)
 
@@ -236,11 +259,21 @@ func _build_ui() -> void:
 	root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	layer.add_child(root)
 	ui_root = root
+	var column := VBoxContainer.new()
+	column.set_anchors_preset(Control.PRESET_FULL_RECT)
+	column.add_theme_constant_override("separation", 0)
+	root.add_child(column)
 	scroll = ScrollContainer.new()
-	scroll.set_anchors_preset(Control.PRESET_FULL_RECT)
+	scroll.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	scroll.follow_focus = true
-	root.add_child(scroll)
+	column.add_child(scroll)
+	bar = PanelContainer.new()
+	bar.theme_type_variation = "Bar"
+	column.add_child(bar)
+	bar_row = HBoxContainer.new()
+	bar_row.add_theme_constant_override("separation", 0)
+	bar.add_child(bar_row)
 	margin = MarginContainer.new()
 	margin.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	margin.size_flags_vertical = Control.SIZE_EXPAND_FILL
@@ -364,6 +397,7 @@ func _set_nav(active: bool) -> void:
 		return
 	nav_active = active
 	ui_theme.set_stylebox("focus", "Button", focus_style if active else StyleBoxEmpty.new())
+	ui_theme.set_stylebox("focus", "Tab", tab_focus_style if active else StyleBoxEmpty.new())
 
 
 func _ensure_focus() -> void:
@@ -395,6 +429,84 @@ func _start_button() -> void:
 			_start_game()
 
 
+## The game's logo, at the top of every menu screen (largest on the first one).
+func _add_logo() -> void:
+	var view := get_viewport_rect().size
+	var logo := TextureRect.new()
+	logo.texture = preload("res://icon.png")
+	logo.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	logo.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
+	var share := 0.2 if screen == "menu" else 0.14
+	var height := clampf(view.y * share, 90.0, 220.0)
+	if screen == "menu":
+		logo.custom_minimum_size.y = height
+		page.add_child(logo)
+		return
+	# Past the first screen: a Back button in the top-left corner, beside the logo.
+	var top := Control.new()
+	top.custom_minimum_size.y = height
+	top.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	logo.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+	top.add_child(logo)
+	var back := _button("back", "‹  " + tr("back"), _back, "Small", "")
+	back.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
+	back.position = Vector2.ZERO
+	back.custom_minimum_size = Vector2(130, 48)
+	top.add_child(back)
+	page.add_child(top)
+
+
+## The bottom bar of the menu screens: Home, How to Play, Stats, Settings.
+func _build_bar() -> void:
+	for child in bar_row.get_children():
+		bar_row.remove_child(child)
+		child.queue_free()
+	bar.visible = screen in MENU_SCREENS
+	if not bar.visible:
+		return
+	var current := screen
+	if screen == "difficulty":
+		current = "mode"
+	elif screen == "help":
+		current = "menu"
+	for tab: Array in TABS:
+		var target: String = tab[1]
+		var here := target == current
+		var color := GOLD_DARK if here else MUTED
+		var button := _button("tab_" + tab[0], "", _show.bind(target, "tab_" + tab[0]), "Tab")
+		button.custom_minimum_size.y = 72
+		var box := VBoxContainer.new()
+		box.alignment = BoxContainer.ALIGNMENT_CENTER
+		box.add_theme_constant_override("separation", 4)
+		box.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
+		var icon := TabIcon.new()
+		icon.kind = tab[0]
+		icon.color = color
+		icon.hole = BAR
+		icon.custom_minimum_size = Vector2(28, 28)
+		icon.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+		box.add_child(icon)
+		var label := _label(tr(tab[0]), "Strong")
+		label.autowrap_mode = TextServer.AUTOWRAP_OFF
+		label.add_theme_font_size_override("font_size", 15)
+		label.add_theme_color_override("font_color", color)
+		box.add_child(label)
+		button.add_child(box)
+		if here:
+			# A short gold line on top of the current tab.
+			var mark := ColorRect.new()
+			mark.color = GOLD
+			mark.anchor_left = 0.5
+			mark.anchor_right = 0.5
+			mark.offset_left = -22
+			mark.offset_right = 22
+			mark.offset_bottom = 3
+			button.add_child(mark)
+		_ignore_mouse(button)
+		button.mouse_filter = Control.MOUSE_FILTER_STOP
+		bar_row.add_child(button)
+
+
 ## One step back: difficulty -> mode -> game type (the menu).
 func _back() -> void:
 	if screen == "menu":
@@ -406,8 +518,8 @@ func _back() -> void:
 		"game":
 			_ask_leave()
 			return
-		"help", "stats", "settings":
-			_show("menu", screen)
+		"help":
+			_show("menu", "help")
 		_:
 			_show("menu", "type_" + game_type)
 
@@ -625,6 +737,9 @@ func _rebuild(focus_id := "", keep_focus := true) -> void:
 	buttons.clear()
 	hint_label = null
 	default_focus = ""
+	_build_bar()
+	if screen in MENU_SCREENS:
+		_add_logo()
 	match screen:
 		"menu":
 			_build_menu()
@@ -725,15 +840,6 @@ func _ignore_mouse(node: Node) -> void:
 		_ignore_mouse(child)
 
 
-func _back_button(id: String) -> void:
-	var row := _row()
-	var button := _button(id, "‹  " + tr("back"), _back, "Small")
-	button.size_flags_horizontal = Control.SIZE_SHRINK_BEGIN
-	button.custom_minimum_size.x = 150
-	row.add_child(button)
-	page.add_child(row)
-
-
 ## A big choice that leads to the next step: a name with a line of detail under it.
 func _step(id: String, title: String, detail: String, callback: Callable) -> void:
 	var button := _button(id, "", callback)
@@ -755,13 +861,6 @@ func _step(id: String, title: String, detail: String, callback: Callable) -> voi
 
 ## Step 1: Old or Classic.
 func _build_menu() -> void:
-	var view := get_viewport_rect().size
-	var emblem := TextureRect.new()
-	emblem.texture = preload("res://icon.png")
-	emblem.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	emblem.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	emblem.custom_minimum_size.y = clampf(view.y * 0.2, 100.0, 220.0)
-	page.add_child(emblem)
 	page.add_child(_label(tr("title"), "Title"))
 	page.add_child(_label(tr("tagline")))
 	page.add_child(_label(tr("choose_game"), "Heading"))
@@ -770,11 +869,7 @@ func _build_menu() -> void:
 			game_type = type
 			_save()
 			_show("mode", "mode_" + mode))
-	var row := _row()
-	row.add_child(_button("help", tr("how_to_play"), _show.bind("help"), "Small"))
-	row.add_child(_button("stats", tr("stats"), _show.bind("stats"), "Small"))
-	row.add_child(_button("settings", tr("settings"), _show.bind("settings"), "Small"))
-	page.add_child(row)
+	page.add_child(_button("help", tr("how_to_play"), _show.bind("help"), "Small"))
 	if not _is_mobile():
 		hint_label = _label("", "Muted")
 		page.add_child(hint_label)
@@ -784,7 +879,6 @@ func _build_menu() -> void:
 
 ## Step 2: Guess the Name or Guess the Flag. Classic starts from here.
 func _build_mode() -> void:
-	_back_button("back")
 	page.add_child(_label(tr("choose_mode"), "Title"))
 	page.add_child(_label(tr("type_" + game_type), "Heading"))
 	for value: String in MODES:
@@ -802,7 +896,6 @@ func _build_mode() -> void:
 
 ## Step 3 (Old only): how hard the pool of flags is. Picking one starts the quiz.
 func _build_difficulty() -> void:
-	_back_button("back")
 	page.add_child(_label(tr("choose_difficulty"), "Title"))
 	page.add_child(_label(tr("type_old") + " · " + tr("mode_" + mode), "Heading"))
 	for value: String in DIFFICULTIES:
@@ -980,7 +1073,6 @@ func _build_result() -> void:
 
 
 func _build_help() -> void:
-	_back_button("back")
 	page.add_child(_label(tr("how_to_play"), "Title"))
 	page.add_child(_label(tr("help_intro") % [OPTIONS, ROUNDS], "", HORIZONTAL_ALIGNMENT_LEFT))
 	var sections := [
@@ -994,17 +1086,14 @@ func _build_help() -> void:
 		card.add_child(_label(tr(section[0]), "Heading", HORIZONTAL_ALIGNMENT_LEFT))
 		for text: String in section[1]:
 			card.add_child(_label(text, "", HORIZONTAL_ALIGNMENT_LEFT))
-	_back_button("back2")
-	default_focus = "back"
+	default_focus = "tab_home"
 
 
 func _build_stats() -> void:
-	_back_button("back")
 	page.add_child(_label(tr("stats"), "Title"))
 	if results.is_empty():
 		page.add_child(_label(tr("no_games")))
-		_back_button("back2")
-		default_focus = "back"
+		default_focus = "tab_stats"
 		return
 	var all := _bucket(func(_r: Dictionary) -> bool: return true)
 	var grid := GridContainer.new()
@@ -1072,15 +1161,14 @@ func _build_stats() -> void:
 			results.clear()
 			_save()
 		clear_armed = not clear_armed
-		_rebuild("back" if results.is_empty() else "clear")
+		_rebuild("tab_stats" if results.is_empty() else "clear")
 	var clear := _button("clear", tr("confirm_clear") if clear_armed else tr("clear_stats"), clear_pressed, "Small")
 	if clear_armed:
 		clear.add_theme_color_override("font_color", RED)
 		clear.add_theme_color_override("font_focus_color", RED)
 		clear.add_theme_color_override("font_hover_color", RED)
 	page.add_child(clear)
-	_back_button("back2")
-	default_focus = "back"
+	default_focus = "clear"
 
 
 ## Games, average, best and pass rate of the results that match `filter`.
@@ -1102,7 +1190,6 @@ func _bucket(filter: Callable) -> Dictionary:
 
 
 func _build_settings() -> void:
-	_back_button("back")
 	page.add_child(_label(tr("settings"), "Title"))
 	var card := _card()
 	card.add_child(_label(tr("language"), "Heading", HORIZONTAL_ALIGNMENT_LEFT))
@@ -1136,8 +1223,7 @@ func _build_settings() -> void:
 	about.add_child(_label(tr("about"), "Heading", HORIZONTAL_ALIGNMENT_LEFT))
 	about.add_child(_label(tr("about_text"), "", HORIZONTAL_ALIGNMENT_LEFT))
 	about.add_child(_label(tr("developed_by"), "Muted", HORIZONTAL_ALIGNMENT_LEFT))
-	_back_button("back2")
-	default_focus = "back"
+	default_focus = "lang_" + language
 
 
 func _on_off(parent: Control, prefix: String, current: bool, callback: Callable) -> void:
@@ -1181,3 +1267,35 @@ func _load() -> void:
 		if result is Dictionary and result.get("type") in TYPES and result.get("mode") in MODES \
 				and result.get("difficulty") in DIFFICULTIES and result.has("score") and result.has("total"):
 			results.append(result)
+
+
+## A bottom-bar icon drawn in code (Material Design shapes, on a 24 x 24 grid).
+class TabIcon extends Control:
+	var kind := "home"
+	var color := Color.WHITE
+	var hole := Color.BLACK  # gear hole, in the bar's color
+
+	func _draw() -> void:
+		var k := size.x / 24.0
+		draw_set_transform(Vector2.ZERO, 0.0, Vector2(k, k))
+		match kind:
+			"home":
+				draw_colored_polygon(PackedVector2Array([Vector2(10, 20), Vector2(10, 14), Vector2(14, 14),
+						Vector2(14, 20), Vector2(19, 20), Vector2(19, 12), Vector2(22, 12), Vector2(12, 3),
+						Vector2(2, 12), Vector2(5, 12), Vector2(5, 20)]), color)
+			"play":
+				draw_colored_polygon(PackedVector2Array([Vector2(8, 5), Vector2(8, 19), Vector2(19, 12)]), color)
+			"stats":
+				draw_rect(Rect2(4.5, 10, 3.5, 9.5), color)
+				draw_rect(Rect2(10.25, 4.5, 3.5, 15), color)
+				draw_rect(Rect2(16, 13, 3.5, 6.5), color)
+			"settings":
+				var center := Vector2(12, 12)
+				for i in 8:
+					var angle := i * TAU / 8.0
+					var along := Vector2.from_angle(angle)
+					var across := along.orthogonal() * 1.9
+					draw_colored_polygon(PackedVector2Array([center + along * 6.0 - across, center + along * 10.5 - across,
+							center + along * 10.5 + across, center + along * 6.0 + across]), color)
+				draw_circle(center, 7.6, color)
+				draw_circle(center, 3.2, hole)
