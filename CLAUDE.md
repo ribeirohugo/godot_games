@@ -26,7 +26,7 @@ copies are git-ignored.
 ```
 <game>/
   project.godot          run/main_scene = res://common/intro/intro.tscn (the intro then opens scenes/main.tscn)
-  scenes/main.tscn       a single Node2D that carries scripts/main.gd
+  scenes/main.tscn       a single Node2D that carries scripts/main.gd (Node3D in the 3D game, Deadforge)
   scripts/               main.gd, strings.gd (translations), sfx.gd (synthesized sounds), game-specific scripts
   icon.png / icon.ico    512x512 icon; icon.png also feeds the Store logos
   export_presets.cfg     presets "Web" and "Windows" (export_path / product_name carry the exe name)
