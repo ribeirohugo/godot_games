@@ -145,6 +145,74 @@ func play_at(sound: String, pos: Vector3, volume_db := 0.0) -> void:
 	pick.play()
 
 
+## The campaign's sounds: creatures, machines, doors, alarms, the world around. Made the first time a
+## mission starts, so the match doesn't wait for them.
+func load_campaign() -> void:
+	if sounds.has("screech"):
+		return
+	sounds["screech"] = _make(0.9, func(t: float) -> float:
+		var f := _sweep_hz(t, 900.0, 520.0, 0.9) * (1.0 + sin(TAU * 31.0 * t) * 0.08)
+		return _crush(_voice(t, f) * 1.6 + _noise() * 0.25, 2.5) * sin(PI * minf(t / 0.9, 1.0)) * 0.6)
+	sounds["moan"] = _make(1.6, func(t: float) -> float:
+		return _voice(t, 95.0 + sin(TAU * 1.3 * t) * 12.0) * sin(PI * t / 1.6) * 0.45, 0.4)
+	sounds["growl"] = _make(1.4, func(t: float) -> float:
+		return _crush(_voice(t, 55.0 + sin(TAU * 7.0 * t) * 8.0) + _noise() * 0.3, 2.0) * sin(PI * t / 1.4) * 0.5, 0.3)
+	sounds["roar"] = _make(1.8, func(t: float) -> float:
+		return _crush(_voice(t, _sweep_hz(t, 140.0, 70.0, 1.8)) * 1.5 + _noise() * 0.5, 3.0) * sin(PI * minf(t / 1.8, 1.0)) * 0.7, 0.35)
+	sounds["behemoth"] = _make(3.0, func(t: float) -> float:
+		return _crush(_voice(t, _sweep_hz(t, 70.0, 38.0, 3.0)) * 2.0 + _noise() * 0.6 + sin(TAU * 32.0 * t), 3.0) * sin(PI * minf(t / 3.0, 1.0)) * 0.8, 0.25)
+	sounds["stomp"] = _boom(0.7, 1.6)
+	sounds["claw_hit"] = _make(0.25, func(t: float) -> float:
+		return (_noise() * 0.8 * exp(-t * 18.0) + sin(TAU * 80.0 * t) * 0.6 * exp(-t * 20.0)) * 0.7, 0.5)
+	sounds["glass"] = _make(0.9, func(t: float) -> float:
+		var s := 0.0
+		for f: float in [2900.0, 4100.0, 5300.0, 6700.0]:
+			s += sin(TAU * f * t + f) * 0.12 * exp(-t * (6.0 + f / 900.0))
+		return s + _noise() * 0.5 * exp(-t * 12.0))
+	sounds["door"] = _make(1.2, func(t: float) -> float:
+		return (_noise() * 0.25 + sin(TAU * 55.0 * t) * 0.4) * sin(PI * t / 1.2) * 0.6 + sin(TAU * 1400.0 * t) * 0.15 * exp(-maxf(t - 1.05, 0.0) * 40.0) * float(t > 1.05), 0.4)
+	sounds["power_on"] = _make(1.5, func(t: float) -> float:
+		return (sin(TAU * _sweep_hz(t, 40.0, 120.0, 1.5) * t) * 0.5 + _noise() * 0.1) * minf(t * 2.0, 1.0) * exp(-maxf(t - 1.0, 0.0) * 5.0), 0.5)
+	sounds["objective"] = _notes([392.0, 523.0, 659.0], 0.12, 0.16)
+	sounds["intel"] = _notes([784.0, 988.0, 1175.0, 1568.0], 0.08, 0.14)
+	sounds["use_done"] = _notes([660.0, 990.0], 0.08, 0.15)
+	sounds["alarm"] = _make(1.2, func(t: float) -> float:
+		return signf(sin(TAU * (620.0 if fmod(t, 0.6) < 0.3 else 480.0) * t)) * 0.12 * float(t < 1.1), 0.6)
+	sounds["steam"] = _make(1.4, func(t: float) -> float:
+		return _noise() * 0.5 * minf(t * 20.0, 1.0) * exp(-maxf(t - 1.0, 0.0) * 8.0))
+	sounds["zap"] = _make(0.5, func(t: float) -> float:
+		return _crush(_noise() * float(randf() < 0.5) + signf(sin(TAU * 60.0 * t)) * 0.3, 3.0) * exp(-t * 6.0) * 0.6)
+	sounds["rumble"] = _make(2.5, func(t: float) -> float:
+		return (sin(TAU * 30.0 * t) * 0.6 + _noise() * 0.4) * sin(PI * t / 2.5) * 0.7, 0.15)
+	sounds["drone"] = _make(1.9, func(t: float) -> float:
+		return (sin(TAU * 180.0 * t) * 0.3 + sin(TAU * 361.0 * t) * 0.2) * (0.8 + 0.2 * sin(TAU * 13.0 * t)) * 0.35)
+	sounds["lock_on"] = _notes([1500.0, 1500.0, 2000.0], 0.07, 0.12)
+	sounds["dash"] = _make(0.4, func(t: float) -> float:
+		return _noise() * 0.6 * sin(PI * t / 0.4) + _sweep(t, 300.0, 1400.0, 0.4) * 0.15 * exp(-t * 4.0), 0.4)
+	sounds["first"] = _make(1.2, func(t: float) -> float:
+		return _crush(_voice(t, 110.0) * (1.0 + sin(TAU * 90.0 * t)) * 0.8, 2.5) * sin(PI * t / 1.2) * 0.5, 0.5)
+	sounds["splash"] = _make(0.3, func(t: float) -> float:
+		return _noise() * 0.5 * exp(-t * 14.0), 0.35)
+	# Loops: the air of each place.
+	sounds["wind"] = _loop(6.0, func(t: float) -> float:
+		return _noise() * 0.35 * (0.55 + 0.45 * sin(TAU * t / 6.0)), 0.03)
+	sounds["hum"] = _loop(4.0, func(t: float) -> float:
+		return (sin(TAU * 60.0 * t) * 0.25 + sin(TAU * 120.0 * t) * 0.12 + _noise() * 0.05) * 0.8, 0.3)
+	sounds["drips"] = _loop(5.0, func(t: float) -> float:
+		var drop := 0.0
+		for at: float in [0.7, 1.9, 2.6, 3.8, 4.4]:
+			if t > at:
+				drop += sin(TAU * 1800.0 * (t - at)) * exp(-(t - at) * 40.0) * 0.3
+		return drop + _noise() * 0.03, 0.8)
+
+
+func _loop(duration: float, generator: Callable, smooth := 1.0) -> AudioStreamWAV:
+	var wav := _make(duration, generator, smooth)
+	wav.loop_mode = AudioStreamWAV.LOOP_FORWARD
+	wav.loop_end = int(duration * RATE)
+	return wav
+
+
 # --- Building sounds -----------------------------------------------------------------------
 
 ## Samples `generator` over `duration` seconds; `smooth` below 1 runs it through a low-pass filter.

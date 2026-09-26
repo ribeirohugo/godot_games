@@ -19,6 +19,8 @@ const BuyMenuScript := preload("res://scripts/buy_menu.gd")
 const BotScript := preload("res://scripts/bot.gd")
 const IconScript := preload("res://scripts/icon.gd")
 const Maps := preload("res://scripts/maps.gd")
+const MissionScript := preload("res://scripts/mission.gd")
+const Campaign := preload("res://scripts/campaign.gd")
 
 const SAVE_PATH := "user://dead_sector.cfg"
 const ACCENT := Color("f0a830")
@@ -50,6 +52,10 @@ var messages: Array = []  # [text, seconds left]
 var using_pad := false
 var quiet_focus := false
 var final := [0, 0]
+## Campaign progress: missions unlocked, difficulty, where to continue, best results, intel found.
+var camp := {"unlocked": 0, "difficulty": 1, "current": {}, "best": {}, "intel": []}
+var camp_mission := 0  # the mission being briefed or played
+var camp_result := {}
 var autotest := false
 var screenshot := false
 var test_round := 0
@@ -94,6 +100,9 @@ func _ready() -> void:
 	for arg in args:
 		if arg.begins_with("--map="):
 			options["map"] = clampi(int(arg.substr(6)), 0, Maps.MAPS.size() - 1)
+		if arg.begins_with("--mission="):
+			_start_mission(int(arg.substr(10)) - 1, 0, {})
+			return
 	if autotest or screenshot:
 		if autotest:
 			Engine.time_scale = 6.0
@@ -154,7 +163,7 @@ func _setup_input() -> void:
 		"fire": [], "scope": [], "reload": [KEY_R], "use": [KEY_E], "drop": [KEY_G],
 		"slot_1": [KEY_1], "slot_2": [KEY_2], "slot_3": [KEY_3], "slot_4": [KEY_4], "slot_5": [KEY_5],
 		"next_weapon": [], "prev_weapon": [], "last_weapon": [KEY_Q],
-		"buy": [KEY_B], "scores": [KEY_TAB], "pause": [KEY_ESCAPE, KEY_P],
+		"buy": [KEY_B], "scores": [KEY_TAB], "pause": [KEY_ESCAPE, KEY_P], "torch": [KEY_F],
 		"look_left": [], "look_right": [], "look_up": [], "look_down": [],
 	}
 	var axes := {
@@ -169,6 +178,7 @@ func _setup_input() -> void:
 		"next_weapon": [JOY_BUTTON_RIGHT_SHOULDER, JOY_BUTTON_Y], "prev_weapon": [JOY_BUTTON_LEFT_SHOULDER],
 		"use": [JOY_BUTTON_DPAD_UP], "scores": [JOY_BUTTON_DPAD_DOWN], "drop": [JOY_BUTTON_DPAD_LEFT],
 		"last_weapon": [JOY_BUTTON_DPAD_RIGHT], "buy": [JOY_BUTTON_BACK], "pause": [JOY_BUTTON_START],
+		"torch": [JOY_BUTTON_RIGHT_STICK],
 	}
 	for action: String in keys:
 		if not InputMap.has_action(action):
@@ -560,6 +570,16 @@ func _show(new_screen: String) -> void:
 			_build_pause(column)
 		"over":
 			_build_over(column)
+		"campaign":
+			_build_campaign(column)
+		"missions":
+			_build_missions(column)
+		"briefing":
+			_build_briefing(column)
+		"archive":
+			_build_archive(column)
+		"mission_done":
+			_build_mission_done(column)
 	_update_hint()
 	for node in column.find_children("*", "Button", true, false):
 		var button := node as Button
@@ -649,7 +669,8 @@ func _build_main(column: VBoxContainer) -> void:
 	if wins + losses + draws > 0:
 		_label(column, tr("record") % [wins, losses, draws], 16, MUTED)
 	_spacer(column, 4)
-	_button(column, tr("play"), func() -> void: _show("setup"))
+	_button(column, tr("campaign"), func() -> void: _show("campaign"))
+	_button(column, tr("skirmish"), func() -> void: _show("setup"))
 	_button(column, tr("how_to_play"), func() -> void:
 		back_to = "main"
 		_show("help"))
@@ -762,9 +783,18 @@ func _language_name() -> String:
 func _build_pause(column: VBoxContainer) -> void:
 	var box := _panel(column)
 	_title(box, tr("paused"), 48)
-	_label(box, "%s · %s" % [tr(Maps.MAPS[options["map"]]["name"]), tr("round_short") % [rules.round_n, rules.max_rounds]], 19, MUTED)
+	if rules.get("campaign") != null:
+		_label(box, "%s · %s" % [tr(rules.mission["title"]), tr("diff_%d" % rules.difficulty)], 19, MUTED)
+		if rules.objective != "":
+			_label(box, "%s: %s" % [tr("objective"), tr(rules.objective)], 17, TEXT, 560.0)
+	else:
+		_label(box, "%s · %s" % [tr(Maps.MAPS[options["map"]]["name"]), tr("round_short") % [rules.round_n, rules.max_rounds]], 19, MUTED)
 	_spacer(box, 6)
 	_button(box, tr("resume"), _resume)
+	if rules.get("campaign") != null:
+		_button(box, tr("restart_checkpoint"), func() -> void:
+			_resume()
+			rules._restore_checkpoint())
 	_button(box, tr("how_to_play"), func() -> void:
 		back_to = "pause"
 		_show("help"))
@@ -790,8 +820,14 @@ func _build_over(column: VBoxContainer) -> void:
 
 func _back() -> void:
 	match screen:
-		"setup":
+		"setup", "campaign":
 			_show("main")
+		"missions", "archive":
+			_show("campaign")
+		"briefing":
+			_show("campaign")
+		"mission_done":
+			_show("campaign")
 		"help", "settings":
 			_show("pause" if state == "paused" else "main")
 		"pause":
@@ -812,6 +848,7 @@ func _save() -> void:
 	config.set_value("record", "wins", wins)
 	config.set_value("record", "losses", losses)
 	config.set_value("record", "draws", draws)
+	config.set_value("campaign", "progress", camp)
 	config.save(SAVE_PATH)
 
 
@@ -838,6 +875,168 @@ func _load() -> void:
 	wins = config.get_value("record", "wins", 0)
 	losses = config.get_value("record", "losses", 0)
 	draws = config.get_value("record", "draws", 0)
+	var saved_camp = config.get_value("campaign", "progress", {})
+	if saved_camp is Dictionary:
+		for key: String in camp:
+			if saved_camp.has(key):
+				camp[key] = saved_camp[key]
+	camp["unlocked"] = clampi(camp["unlocked"], 0, Campaign.count() - 1)
+
+
+# --- Campaign ------------------------------------------------------------------------------
+
+func _start_mission(i: int, area: int, loadout: Dictionary) -> void:
+	_end_match()
+	get_tree().paused = false
+	messages.clear()
+	camp_mission = i
+	rules = MissionScript.new()
+	rules.process_mode = Node.PROCESS_MODE_PAUSABLE
+	add_child(rules)
+	var picked := {"mission": i, "difficulty": camp["difficulty"], "area": area}
+	if not loadout.is_empty():
+		picked["loadout"] = loadout
+	rules.start(self, picked)
+	state = "playing"
+	_show("")
+	if not autotest and not screenshot:
+		_capture()
+
+
+## Called by mission.gd at every checkpoint: where "Continue" will start.
+func campaign_progress(mission: int, area: int, loadout: Dictionary) -> void:
+	camp["current"] = {"mission": mission, "area": area, "loadout": loadout if area > 0 else {}}
+	_save()
+
+
+func intel_found(id: String) -> void:
+	if not (camp["intel"] as Array).has(id):
+		camp["intel"].append(id)
+		_save()
+
+
+func mission_complete(i: int, stats: Dictionary, _loadout: Dictionary) -> void:
+	camp_result = stats
+	var key := str(i)
+	var best: Dictionary = camp["best"].get(key, {})
+	if best.is_empty() or stats["time"] < best.get("time", INF):
+		best["time"] = stats["time"]
+	camp["best"][key] = best
+	if i + 1 < Campaign.count():
+		camp["unlocked"] = maxi(camp["unlocked"], i + 1)
+		camp["current"] = {"mission": i + 1, "area": 0, "loadout": {}}
+	else:
+		camp["current"] = {}
+	_save()
+	state = "over"
+	get_tree().paused = true
+	Input.mouse_mode = Input.MOUSE_MODE_VISIBLE
+	had_capture = false
+	_show("mission_done")
+
+
+func _intel_of(i: int) -> int:
+	var n := 0
+	for id: String in camp["intel"]:
+		if id.begins_with(Campaign.mission(i)["id"] + "_"):
+			n += 1
+	return n
+
+
+static func _clock(seconds: float) -> String:
+	return "%d:%02d" % [int(seconds) / 60, int(seconds) % 60]
+
+
+func _build_campaign(column: VBoxContainer) -> void:
+	var box := _panel(column)
+	_title(box, tr("campaign"), 44)
+	_label(box, tr("campaign_tagline"), 17, MUTED, 560.0)
+	_spacer(box, 4)
+	var current: Dictionary = camp["current"]
+	if not current.is_empty():
+		var m := Campaign.mission(current["mission"])
+		_button(box, tr("continue_at") % tr(m["title"]), func() -> void:
+			_start_mission(current["mission"], current["area"], current.get("loadout", {})), 560.0)
+	_button(box, tr("new_campaign"), func() -> void:
+		camp_mission = 0
+		_show("briefing"), 560.0)
+	_button(box, tr("mission_select"), func() -> void: _show("missions"), 560.0)
+	_rows(box, [["difficulty", func() -> String: return tr("diff_%d" % camp["difficulty"]),
+		func(step: int) -> void: camp["difficulty"] = posmod(camp["difficulty"] + step, 4)]], 560.0, func(_key: String) -> void: _save())
+	_button(box, tr("intel_archive"), func() -> void: _show("archive"), 560.0)
+	_button(box, tr("back"), _back, 560.0)
+
+
+func _build_missions(column: VBoxContainer) -> void:
+	var box := _panel(column)
+	_title(box, tr("mission_select"), 40)
+	for i in Campaign.count():
+		var m := Campaign.mission(i)
+		var open: bool = i <= camp["unlocked"]
+		var text: String = tr(m["title"]) if open else "%s — %s" % [tr("mission_short") % (i + 1), tr("locked")]
+		var best: Dictionary = camp["best"].get(str(i), {})
+		if open and best.has("time"):
+			text += "   (%s)" % (tr("best") % [_clock(best["time"]), _intel_of(i)])
+		var button := _button(box, text, func() -> void:
+			camp_mission = i
+			_show("briefing"), 680.0)
+		button.disabled = not open
+	_button(box, tr("back"), _back, 680.0)
+
+
+func _build_briefing(column: VBoxContainer) -> void:
+	var m := Campaign.mission(camp_mission)
+	var box := _panel(column)
+	_title(box, tr(m["title"]), 40)
+	_label(box, tr(m["location"]), 18, ACCENT)
+	var body := _label(box, tr(m["briefing"]), 18, TEXT, 720.0)
+	body.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_label(box, "%s: %s" % [tr("difficulty"), tr("diff_%d" % camp["difficulty"])], 16, MUTED)
+	_spacer(box, 4)
+	_button(box, tr("deploy"), func() -> void: _start_mission(camp_mission, 0, {}), 560.0)
+	_button(box, tr("back"), _back, 560.0)
+
+
+func _build_archive(column: VBoxContainer) -> void:
+	var box := _panel(column)
+	_title(box, tr("intel_archive"), 40)
+	help_scroll = ScrollContainer.new()
+	help_scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	help_scroll.custom_minimum_size = Vector2(820, minf(470.0, get_viewport().get_visible_rect().size.y - 250.0))
+	box.add_child(help_scroll)
+	var text := VBoxContainer.new()
+	text.add_theme_constant_override("separation", 6)
+	help_scroll.add_child(text)
+	if (camp["intel"] as Array).is_empty():
+		_label(text, tr("no_intel"), 18, MUTED, 790.0)
+	for id: String in camp["intel"]:
+		_label(text, tr(id + "_title"), 22, ACCENT)
+		var doc := _label(text, tr(id + "_body"), 17, TEXT, 790.0)
+		doc.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		_spacer(text, 6)
+	_button(box, tr("back"), _back)
+
+
+func _build_mission_done(column: VBoxContainer) -> void:
+	var s := camp_result
+	var box := _panel(column)
+	_title(box, tr("mission_complete"), 52, Color(0.5, 1.0, 0.5))
+	_label(box, tr(Campaign.mission(camp_mission)["title"]), 20, ACCENT)
+	var shots: int = maxi(s.get("shots", 0), 1)
+	for row: Array in [["stat_time", _clock(s.get("time", 0.0))], ["stat_kills", str(s.get("kills", 0))],
+			["stat_headshots", str(s.get("headshots", 0))], ["stat_accuracy", "%d%%" % mini(100, int(100.0 * s.get("hits", 0) / shots))],
+			["stat_deaths", str(s.get("deaths", 0))], ["stat_intel", "%d / 3" % _intel_of(camp_mission)]]:
+		_label(box, "%s:  %s" % [tr(row[0]), row[1]], 19, TEXT)
+	_spacer(box, 6)
+	if camp_mission + 1 < Campaign.count():
+		_button(box, tr("next_mission"), func() -> void:
+			camp_mission += 1
+			_quit_to_menu()
+			_show("briefing"), 520.0)
+	else:
+		_label(box, tr("campaign_done"), 16, MUTED, 520.0)
+	_button(box, tr("replay_mission"), func() -> void: _start_mission(camp_mission, 0, {}), 520.0)
+	_button(box, tr("main_menu"), _quit_to_menu, 520.0)
 
 
 # --- Icon ----------------------------------------------------------------------------------

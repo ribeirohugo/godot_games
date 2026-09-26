@@ -5,6 +5,7 @@ extends Control
 ## screen and scale with its height.
 
 const Weapons := preload("res://scripts/weapons.gd")
+const Campaign := preload("res://scripts/campaign.gd")
 
 const ATT := Color(1.0, 0.72, 0.3)
 const DEF := Color(0.45, 0.7, 1.0)
@@ -18,7 +19,7 @@ const RADAR_RANGE := 36.0  # meters from the middle of the radar to its edge
 var game  # main.gd
 var radar_box: Control
 var radar_tex: ImageTexture
-var radar_rules  # the match the radar image was made for
+var radar_rules  # the map the radar image was made for
 
 
 func _ready() -> void:
@@ -49,11 +50,14 @@ func _draw() -> void:
 	var h = rules.human
 	var view = rules.view
 	var font: Font = game.bold
+	if rules.get("campaign") != null:
+		_draw_campaign(rules, h, s, font)
+		return
 	if h.alive:
 		if h.scope > 0 and Weapons.data(h.current).has("scope"):
 			_draw_scope(s)
 		elif h.scope > 0:
-			draw_circle(size / 2.0, maxf(1.5 * s, 1.0), Color(GREEN, 0.7))  # aiming down the sights
+			_draw_dot(s)  # aiming down the sights
 		else:
 			_draw_crosshair(h, s)
 		_draw_hurt(h, s)
@@ -87,6 +91,145 @@ func _text(at: Vector2, text: String, font_size: float, color: Color, align := H
 	draw_string(font, at, text, align, width, int(font_size), color)
 
 
+# --- Campaign ------------------------------------------------------------------------------
+
+func _draw_campaign(rules, h, s: float, font: Font) -> void:
+	var cam := get_viewport().get_camera_3d()
+	var cine: bool = not rules.cine.is_empty()
+	radar_box.visible = not cine and h.alive and game.state == "playing"
+	radar_box.position = Vector2(14, 14) * s
+	radar_box.size = Vector2(RADAR, RADAR) * s
+	if not cine and h.alive and h != null:
+		if h.scope > 0 and Weapons.data(h.current).has("scope"):
+			_draw_scope(s)
+		elif h.scope > 0:
+			_draw_dot(s)
+		else:
+			_draw_crosshair(h, s)
+		if rules.hitmark_t > 0.0:
+			var c := size / 2.0
+			var col := Color(1.0, 0.25, 0.2) if rules.kill_mark else Color(1, 1, 1, 0.9)
+			for d: Vector2 in [Vector2(1, 1), Vector2(-1, 1), Vector2(1, -1), Vector2(-1, -1)]:
+				draw_line(c + d * 6.0 * s, c + d * 13.0 * s, col, maxf(2.0 * s, 1.5))
+		_draw_hurt(h, s)
+		# Low health: the edges of the view go red.
+		if h.health < 35.0:
+			var a: float = (1.0 - h.health / 35.0) * (0.35 + 0.1 * sin(Time.get_ticks_msec() / 200.0))
+			for i in 6:
+				var k := i * 18.0 * s
+				draw_rect(Rect2(k, k, size.x - k * 2.0, size.y - k * 2.0), Color(0.6, 0.0, 0.0, a * (1.0 - i / 6.0)), false, 20.0 * s)
+		_draw_status(h, s, font)
+		_draw_ammo(h, s, font)
+		# Allies: their names over their heads.
+		for name: String in rules.allies:
+			var a = rules.allies[name]
+			var at: Vector3 = a.eye_position() + Vector3(0, 0.45, 0)
+			if cam != null and not cam.is_position_behind(at) and at.distance_to(h.position) < 40.0:
+				var p := cam.unproject_position(at)
+				_text(p - Vector2(100, 0) * s, a.nick, 14 * s, Color(0.5, 1.0, 0.5, 0.85), HORIZONTAL_ALIGNMENT_CENTER, 200 * s)
+		_draw_objective(rules, h, s, cam)
+		var hint: String = rules.hint
+		if hint == "":
+			for d in rules.world.drops:
+				if Vector2(d.position.x - h.position.x, d.position.z - h.position.z).length() < 1.8 and Weapons.LIST.has(d.get_meta("id")):
+					hint = tr("hint_pickup") % [_key("use"), Weapons.name_of(d.get_meta("id"))]
+					break
+		if hint != "":
+			_text(Vector2(0, size.y * 0.62), hint, 19 * s, Color(1.0, 0.9, 0.6), HORIZONTAL_ALIGNMENT_CENTER, size.x)
+			var u = rules.uses.get(rules.interact_id, {})
+			if not u.is_empty() and u["t"] > 0.0:
+				var w := 300.0 * s
+				var r := Rect2(size.x / 2.0 - w / 2.0, size.y * 0.64, w, 10 * s)
+				draw_rect(r.grow(2 * s), PANEL)
+				draw_rect(Rect2(r.position, Vector2(w * clampf(u["t"] / u["hold"], 0.0, 1.0), r.size.y)), Color(1.0, 0.8, 0.3))
+		if h.flash_t > 0.0:
+			draw_rect(Rect2(Vector2.ZERO, size), Color(1, 1, 1, clampf(h.flash_t / maxf(h.flash_len * 0.55, 0.01), 0.0, 1.0)))
+	if rules.countdown >= 0.0 and not cine:
+		var t: float = ceilf(rules.countdown)
+		var col := Color(1.0, 0.35, 0.3) if t < 60.0 else WHITE
+		_text(Vector2(size.x - 240 * s, 46 * s), "%d:%02d" % [int(t) / 60, int(t) % 60], 36 * s, col, HORIZONTAL_ALIGNMENT_RIGHT, 220 * s)
+	if rules.boss != null and rules.boss.alive and not cine:
+		var w := 520.0 * s
+		var r := Rect2(size.x / 2.0 - w / 2.0, 92 * s, w, 12 * s)
+		draw_rect(r.grow(3 * s), PANEL)
+		draw_rect(Rect2(r.position, Vector2(w * clampf(rules.boss.health / 1600.0, 0.0, 1.0), r.size.y)), Color(0.3, 0.85, 1.0))
+		_text(Vector2(0, r.position.y - 6 * s), tr("enemy_first"), 16 * s, Color(0.6, 0.9, 1.0), HORIZONTAL_ALIGNMENT_CENTER, size.x)
+	# Letterbox in cinematics.
+	if cine:
+		draw_rect(Rect2(0, 0, size.x, size.y * 0.11), Color.BLACK)
+		draw_rect(Rect2(0, size.y * 0.89, size.x, size.y * 0.11), Color.BLACK)
+	if not h.alive and not cine:
+		_text(Vector2(0, size.y * 0.5), tr("you_died"), 44 * s, Color(1.0, 0.3, 0.25), HORIZONTAL_ALIGNMENT_CENTER, size.x)
+	_draw_messages(s)
+	_draw_line(rules, s, font, cine)
+	if rules.toast_t > 0.0 and rules.toast != "":
+		var a := clampf(rules.toast_t * 2.0, 0.0, 1.0)
+		_text(Vector2(0, size.y * 0.2), rules.toast, 24 * s, Color(1.0, 0.85, 0.4, a), HORIZONTAL_ALIGNMENT_CENTER, size.x)
+	draw_rect(Rect2(Vector2.ZERO, size), Color(0, 0, 0, clampf(rules.fade, 0.0, 1.0)))
+	if rules.title_t > 0.0:
+		var a := clampf(minf(rules.title_t, 6.0 - rules.title_t) * 1.2, 0.0, 1.0)
+		_text(Vector2(0, size.y * 0.44), rules.title[0], 52 * s, Color(ACCENT_TITLE, a), HORIZONTAL_ALIGNMENT_CENTER, size.x)
+		_text(Vector2(0, size.y * 0.44 + 42 * s), rules.title[1], 21 * s, Color(WHITE, a), HORIZONTAL_ALIGNMENT_CENTER, size.x)
+	if game.state == "playing" and Input.mouse_mode != Input.MOUSE_MODE_CAPTURED and not game.using_pad and not cine:
+		_text(Vector2(0, size.y * 0.42), tr("click_to_play"), 30 * s, Color(1.0, 0.85, 0.4), HORIZONTAL_ALIGNMENT_CENTER, size.x)
+
+
+const ACCENT_TITLE := Color(0.94, 0.66, 0.19)
+
+
+func _draw_objective(rules, h, s: float, cam: Camera3D) -> void:
+	if rules.objective == "":
+		return
+	var text: String = tr(rules.objective)
+	if rules.objective_group != "":
+		var left := 0
+		for m in rules.groups.get(rules.objective_group, []):
+			if m.alive:
+				left += 1
+		if left > 0:
+			text += "  (" + tr("remaining") % left + ")"
+	var font: Font = game.bold
+	var w := font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, int(18 * s)).x + 40 * s
+	var box := Rect2(size.x / 2.0 - w / 2.0, 10 * s, w, 50 * s)
+	draw_rect(box, PANEL)
+	draw_rect(Rect2(box.position, Vector2(4 * s, box.size.y)), ACCENT_TITLE)
+	_text(Vector2(box.position.x, box.position.y + 18 * s), tr("objective").to_upper(), 12 * s, ACCENT_TITLE, HORIZONTAL_ALIGNMENT_CENTER, w)
+	_text(Vector2(box.position.x, box.position.y + 40 * s), text, 18 * s, WHITE, HORIZONTAL_ALIGNMENT_CENTER, w)
+	# The waypoint: a diamond on the spot, with the distance.
+	var mark: String = rules.objective_mark
+	if mark == "" or not rules.markers.has(mark) or cam == null:
+		return
+	var at: Vector3 = rules.markers[mark][0] + Vector3(0, 1.5, 0)
+	var dist: float = at.distance_to(h.position)
+	var p: Vector2
+	if cam.is_position_behind(at):
+		p = Vector2(size.x / 2.0, size.y - 90 * s)
+		var side := (at - cam.global_position).dot(cam.global_basis.x)
+		p.x = 40 * s if side < 0.0 else size.x - 40 * s
+	else:
+		p = cam.unproject_position(at)
+		p = p.clamp(Vector2(40, 80) * s, size - Vector2(40, 100) * s)
+	var r := 9.0 * s
+	var diamond := PackedVector2Array([p + Vector2(0, -r), p + Vector2(r, 0), p + Vector2(0, r), p + Vector2(-r, 0)])
+	draw_colored_polygon(diamond, Color(ACCENT_TITLE, 0.85))
+	_text(p + Vector2(-60 * s, 26 * s), "%d m" % int(dist), 14 * s, Color(WHITE, 0.85), HORIZONTAL_ALIGNMENT_CENTER, 120 * s)
+
+
+## The line being spoken, with the speaker's name.
+func _draw_line(rules, s: float, font: Font, cine: bool) -> void:
+	if rules.line.is_empty():
+		return
+	var who: String = rules.line[0]
+	var text: String = tr(rules.line[1])
+	var name_text: String = tr("spk_" + who)
+	var width := minf(size.x - 80 * s, 900 * s)
+	var y := size.y * (0.84 if cine else 0.78)
+	var lines_n := ceili(font.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, int(19 * s)).x / width)
+	draw_rect(Rect2(size.x / 2.0 - width / 2.0 - 14 * s, y - 26 * s, width + 28 * s, (34 + lines_n * 24) * s), Color(0, 0, 0, 0.55))
+	_text(Vector2(0, y - 6 * s), name_text, 16 * s, Campaign.SPEAKERS.get(who, WHITE), HORIZONTAL_ALIGNMENT_CENTER, size.x)
+	draw_multiline_string(font, Vector2(size.x / 2.0 - width / 2.0, y + 18 * s), text, HORIZONTAL_ALIGNMENT_CENTER, width, int(19 * s), -1, WHITE)
+
+
 # --- Aim -----------------------------------------------------------------------------------
 
 func _draw_crosshair(h, s: float) -> void:
@@ -104,6 +247,13 @@ func _draw_crosshair(h, s: float) -> void:
 		var b := c + dir * (gap + length)
 		draw_line(a, b, Color(0, 0, 0, 0.6), width + 2.0)
 		draw_line(a, b, GREEN, width)
+
+
+## Aiming down the sights: a clear dot where the shots go, outlined so it shows on anything.
+func _draw_dot(s: float) -> void:
+	var c := size / 2.0
+	draw_circle(c, maxf(4.0 * s, 3.0), Color(0, 0, 0, 0.7))
+	draw_circle(c, maxf(2.6 * s, 2.0), GREEN)
 
 
 func _draw_scope(s: float) -> void:
@@ -229,13 +379,13 @@ func _make_radar(world) -> void:
 	for z in world.depth:
 		for x in world.width:
 			var c := Vector2i(x, z)
-			var ch: String = world.char_at(c)
 			var col := Color(0.42, 0.42, 0.4, 0.9)
-			match ch:
-				"#":
-					continue
-				"c", "C", "-", "o":
-					col = Color(0.62, 0.6, 0.55, 0.95)
+			if world.is_wall(c):
+				continue
+			if world.is_solid(c):
+				col = Color(0.62, 0.6, 0.55, 0.95)
+			elif world.water.has(c):
+				col = Color(0.3, 0.42, 0.5, 0.9)
 			if world.site_at(world.center(c)) != "":
 				col = col.lerp(Color(0.75, 0.25, 0.2, 0.95), 0.35)
 			img.fill_rect(Rect2i(x * px, z * px, px, px), col)
@@ -246,8 +396,8 @@ func _draw_radar() -> void:
 	var rules = game.rules
 	if rules == null:
 		return
-	if radar_rules != rules:
-		radar_rules = rules
+	if radar_rules != rules.world:
+		radar_rules = rules.world
 		_make_radar(rules.world)
 	var world = rules.world
 	var s := size.y / 720.0

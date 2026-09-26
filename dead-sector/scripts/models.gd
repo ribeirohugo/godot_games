@@ -15,11 +15,22 @@ const OLIVE := Color(0.27, 0.31, 0.20)
 const SKIN := Color(0.78, 0.60, 0.46)
 const GLOVE := Color(0.10, 0.09, 0.09)
 
-## Clothes of each side: shirt, vest, trousers, headgear.
+## Clothes of each side: shirt, vest, trousers, headgear. The match uses att and def; the campaign
+## dresses its people by faction: the sector's rogue security, the Black Division (Mercer's own unit),
+## the army, and the HELIX creatures (whose clothes are whatever they died in).
 const UNIFORM := {
 	"att": [Color(0.55, 0.47, 0.33), Color(0.29, 0.27, 0.21), Color(0.42, 0.37, 0.27), Color(0.07, 0.07, 0.07)],
 	"def": [Color(0.20, 0.25, 0.33), Color(0.11, 0.13, 0.17), Color(0.22, 0.25, 0.30), Color(0.15, 0.18, 0.23)],
+	"rogue": [Color(0.36, 0.4, 0.44), Color(0.2, 0.22, 0.25), Color(0.3, 0.33, 0.36), Color(0.25, 0.27, 0.3)],
+	"black": [Color(0.13, 0.13, 0.14), Color(0.08, 0.08, 0.09), Color(0.14, 0.14, 0.15), Color(0.06, 0.06, 0.07)],
+	"mercer": [Color(0.2, 0.22, 0.2), Color(0.13, 0.14, 0.12), Color(0.18, 0.19, 0.17), Color(0.12, 0.13, 0.12)],
+	"army": [Color(0.36, 0.39, 0.26), Color(0.27, 0.29, 0.19), Color(0.33, 0.35, 0.23), Color(0.3, 0.33, 0.21)],
+	"infected": [Color(0.7, 0.7, 0.68), Color(0.3, 0.3, 0.3), Color(0.25, 0.3, 0.42), Color(0.2, 0.2, 0.2)],
+	"mutant": [Color(0.5, 0.45, 0.48), Color(0.3, 0.3, 0.3), Color(0.3, 0.3, 0.3), Color(0.2, 0.2, 0.2)],
+	"first": [Color(0.07, 0.08, 0.09), Color(0.05, 0.05, 0.06), Color(0.07, 0.08, 0.09), Color(0.04, 0.04, 0.05)],
 }
+const HELIX_GLOW := Color(1.0, 0.55, 0.15)  # the color of HELIX tissue
+const FIRST_GLOW := Color(0.2, 0.85, 1.0)
 
 static var _boxes := {}
 static var vm := false  # true while building the first-person model
@@ -89,6 +100,19 @@ static func _muzzle(parent: Node3D, z: float, y := 0.03) -> void:
 static func gun(id: String) -> Node3D:
 	var g := Node3D.new()
 	match id:
+		"claws", "maul":
+			_muzzle(g, -0.3, 0.0)
+		"helix":
+			box(g, Vector3(0.055, 0.09, 0.5), Vector3(0, 0.04, -0.12), POLY, 0.4)
+			box(g, Vector3(0.06, 0.03, 0.34), Vector3(0, 0.1, -0.12), GUNMETAL, 0.6)
+			box(g, Vector3(0.03, 0.03, 0.3), Vector3(0, 0.03, -0.5), GUNMETAL, 0.6)
+			box(g, Vector3(0.062, 0.012, 0.36), Vector3(0, 0.07, -0.12), FIRST_GLOW, 0.0)  # glowing strip
+			box(g, Vector3(0.04, 0.14, 0.05), Vector3(0, -0.07, -0.08), POLY, 0.0, Vector3(-0.2, 0, 0))
+			box(g, Vector3(0.032, 0.1, 0.045), Vector3(0, -0.04, 0.05), POLY, 0.0, Vector3(0.3, 0, 0))
+			box(g, Vector3(0.045, 0.09, 0.2), Vector3(0, 0.0, 0.22), POLY)
+			_glow(g, Vector3(0.064, 0.014, 0.3), Vector3(0, 0.07, -0.12), FIRST_GLOW)
+			_sight(g, 0.12, 0.0)
+			_muzzle(g, -0.66, 0.03)
 		"knife":
 			box(g, Vector3(0.028, 0.032, 0.11), Vector3(0, 0, 0.02), POLY)
 			for i in 4:
@@ -271,6 +295,17 @@ static func gun(id: String) -> Node3D:
 	return g
 
 
+## A glowing part (not merged, so it keeps its light).
+static func _glow(parent: Node3D, size: Vector3, pos: Vector3, color: Color, energy := 3.0) -> MeshInstance3D:
+	var part := MeshInstance3D.new()
+	part.mesh = _box_mesh(size)
+	part.material_override = Tex.flat(color, energy, 0.0, vm)
+	part.position = pos
+	part.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	parent.add_child(part)
+	return part
+
+
 ## A trigger guard and trigger in front of the grip, at z.
 static func _guard(g: Node3D, z: float) -> void:
 	box(g, Vector3(0.008, 0.006, 0.055), Vector3(0, -0.03, z - 0.01), POLY)
@@ -323,6 +358,8 @@ static func hands(id: String) -> Array:
 			return [Vector3(0, 0, 0.02), Vector3(-0.2, -0.12, 0.05)]
 		"shotgun":
 			return [Vector3(0, -0.03, 0.04), Vector3(0, 0.0, -0.34)]
+		"claws":
+			return [Vector3(0.1, 0.0, -0.1), Vector3(-0.3, 0.0, -0.1)]
 		"smg":
 			return [Vector3(0, -0.03, 0.02), Vector3(0, -0.02, -0.26)]
 	return [Vector3(0, -0.03, 0.03), Vector3(0, 0.0, -0.36)]
@@ -345,6 +382,8 @@ const BOOT := Color(0.16, 0.12, 0.09)
 ## aim) and the colors of its arms. `look` picks the face, headgear and kit, so every soldier differs
 ## but always looks the same. Each moving part is one merged mesh.
 static func soldier(team: String, look := 0) -> Dictionary:
+	if team in ["infected", "mutant", "first"]:
+		return creature(team, look)
 	vm = false
 	var rng := RandomNumberGenerator.new()
 	rng.seed = look
@@ -429,7 +468,7 @@ static func soldier(team: String, look := 0) -> Dictionary:
 	box(torso, Vector3(0.06, 0.05, 0.03), Vector3(0, 0.03, -0.125), STEEL, 0.7)  # buckle
 	for side in [-1, 1]:
 		box(torso, Vector3(0.08, 0.1, 0.08), Vector3(0.18 * side, 0.02, 0.07), gear.darkened(0.15))  # belt pouches
-	var pack := rng.randi() % 3 if team == "att" else rng.randi() % 2 + 1
+	var pack := rng.randi() % 3 if team in ["att", "army"] else rng.randi() % 2 + 1
 	match pack:
 		0:
 			box(torso, Vector3(0.34, 0.38, 0.15), Vector3(0, 0.36, 0.23), Color(0.36, 0.3, 0.2))  # backpack
@@ -450,7 +489,7 @@ static func soldier(team: String, look := 0) -> Dictionary:
 	parts["torso"] = torso
 	parts["head"] = head
 	parts["aim"] = aim
-	var rolled := rng.randf() < (0.4 if team == "att" else 0.2)
+	var rolled := rng.randf() < (0.4 if team in ["att", "army"] else (0.0 if team in ["rogue", "black"] else 0.2))
 	parts["arm_color"] = [shirt, skin if rolled else shirt.darkened(0.04), GLOVE if rng.randf() < 0.8 else skin]
 	for part in [hips, torso, head] + parts["thighs"] + parts["shins"] + parts["feet"]:
 		merge(part)
@@ -475,6 +514,9 @@ static func _head(head: Node3D, team: String, rng: RandomNumberGenerator, skin: 
 		box(head, Vector3(0.17, 0.07, 0.18), Vector3(0, 0.07, -0.02), hair)  # beard
 		box(head, Vector3(0.07, 0.015, 0.01), Vector3(0, 0.1, -0.104), hair)  # moustache
 	var style := rng.randi() % 3
+	if team in ["rogue", "black", "army", "mercer"]:
+		_campaign_head(head, team, style, rng, skin, hair, hat, strap)
+		return
 	if team == "att":
 		match style:
 			0:  # balaclava with the eyes showing
@@ -521,6 +563,184 @@ static func _head(head: Node3D, team: String, rng: RandomNumberGenerator, skin: 
 			box(head, Vector3(0.2, 0.05, 0.2), Vector3(0, 0.215, 0.02), hair)
 
 
+## Headgear of the campaign's soldiers.
+static func _campaign_head(head: Node3D, team: String, style: int, rng: RandomNumberGenerator, skin: Color, hair: Color, hat: Color, strap: Color) -> void:
+	var helmet := func(color: Color) -> void:
+		box(head, Vector3(0.24, 0.1, 0.26), Vector3(0, 0.27, 0.01), color)
+		box(head, Vector3(0.2, 0.04, 0.22), Vector3(0, 0.33, 0.01), color)
+		box(head, Vector3(0.25, 0.04, 0.27), Vector3(0, 0.225, 0.01), color.darkened(0.3))
+		for side in [-1, 1]:
+			box(head, Vector3(0.012, 0.03, 0.18), Vector3(0.125 * side, 0.27, 0.01), POLY)
+			box(head, Vector3(0.02, 0.12, 0.02), Vector3(0.1 * side, 0.08, -0.03), strap)
+	match team:
+		"rogue":
+			# The sector's security, still in their gas masks.
+			helmet.call(hat)
+			box(head, Vector3(0.17, 0.15, 0.04), Vector3(0, 0.12, -0.1), Color(0.16, 0.17, 0.16))  # face plate
+			for side in [-1, 1]:
+				var lens := cylinder(head, 0.028, 0.02, Vector3(0.042 * side, 0.165, -0.123), Color(0.05, 0.07, 0.07), Vector3(PI / 2.0, 0, 0))
+				lens.material_override = _mat(Color(0.12, 0.18, 0.2), 0.8)
+			cylinder(head, 0.035, 0.06, Vector3(0, 0.07, -0.14), Color(0.22, 0.24, 0.2), Vector3(PI / 2.0, 0, 0))  # filter
+			box(head, Vector3(0.21, 0.03, 0.21), Vector3(0, 0.2, 0.0), Color(0.12, 0.12, 0.12))  # straps
+		"black":
+			# Black Division: balaclava, helmet and goggles; no face to see.
+			box(head, Vector3(0.205, 0.235, 0.225), Vector3(0, 0.15, 0.005), hat)
+			helmet.call(hat.lightened(0.05))
+			box(head, Vector3(0.19, 0.05, 0.03), Vector3(0, 0.17, -0.11), Color(0.03, 0.03, 0.03), 0.6)  # goggles
+			box(head, Vector3(0.16, 0.035, 0.01), Vector3(0, 0.17, -0.126), Color(0.15, 0.25, 0.2), 0.8)
+			if style == 0:
+				box(head, Vector3(0.08, 0.05, 0.04), Vector3(0, 0.285, -0.13), POLY)
+				box(head, Vector3(0.1, 0.05, 0.07), Vector3(0, 0.26, -0.17), GUNMETAL, 0.4)
+			for side in [-1, 1]:
+				box(head, Vector3(0.045, 0.085, 0.085), Vector3(0.115 * side, 0.15, 0.0), POLY)
+		"army":
+			if style < 2:
+				helmet.call(hat)
+				box(head, Vector3(0.26, 0.05, 0.28), Vector3(0, 0.3, 0.01), hat.darkened(0.15))  # helmet cover band
+			else:
+				box(head, Vector3(0.28, 0.03, 0.3), Vector3(0, 0.23, 0.01), hat)  # boonie hat brim
+				box(head, Vector3(0.2, 0.08, 0.22), Vector3(0, 0.27, 0.01), hat)
+			if rng.randf() < 0.4:
+				box(head, Vector3(0.17, 0.035, 0.015), Vector3(0, 0.165, -0.11), Color(0.06, 0.06, 0.07), 0.6)
+		_:  # mercer: Black Division, faces showing
+			if style == 2:
+				box(head, Vector3(0.2, 0.07, 0.22), Vector3(0, 0.27, 0.005), hat)  # cap
+				box(head, Vector3(0.18, 0.015, 0.1), Vector3(0, 0.24, -0.14), hat.darkened(0.2))
+				box(head, Vector3(0.2, 0.05, 0.2), Vector3(0, 0.215, 0.02), hair)
+			else:
+				helmet.call(hat)
+				box(head, Vector3(0.08, 0.05, 0.04), Vector3(0, 0.285, -0.13), POLY)
+			for side in [-1, 1]:
+				box(head, Vector3(0.045, 0.085, 0.085), Vector3(0.115 * side, 0.15, 0.0), POLY)
+			box(head, Vector3(0.012, 0.012, 0.08), Vector3(0.08, 0.09, -0.08), POLY)  # boom mic
+
+
+## A HELIX creature: an infected (a person in the clothes they died in, skin grey, eyes burning), a
+## mutant (swollen and hunched, glowing growths, one arm a club) or the First (a soldier in a black
+## suit with glowing seams). Returns the same parts as soldier().
+static func creature(kind: String, look := 0) -> Dictionary:
+	vm = false
+	var rng := RandomNumberGenerator.new()
+	rng.seed = look
+	var first := kind == "first"
+	var mutant := kind == "mutant"
+	var shirts := [Color(0.82, 0.82, 0.8), Color(0.32, 0.45, 0.6), Color(0.45, 0.45, 0.47), Color(0.55, 0.2, 0.18),
+			Color(0.36, 0.4, 0.44), Color(0.25, 0.4, 0.38), Color(0.88, 0.88, 0.9)]
+	var shirt: Color = shirts[rng.randi() % shirts.size()]
+	var pants: Color = [Color(0.22, 0.28, 0.42), Color(0.45, 0.4, 0.3), Color(0.2, 0.2, 0.22), Color(0.3, 0.33, 0.36)][rng.randi() % 4]
+	var skin: Color = (SKINS[rng.randi() % SKINS.size()] as Color).lerp(Color(0.55, 0.57, 0.52), 0.55)
+	if mutant:
+		skin = Color(0.46, 0.4, 0.44)
+		shirt = Color(0.75, 0.75, 0.72) if rng.randf() < 0.5 else UNIFORM["rogue"][0]
+		pants = Color(0.25, 0.26, 0.28)
+	if first:
+		shirt = UNIFORM["first"][0]
+		pants = UNIFORM["first"][2]
+	var glow := FIRST_GLOW if first else HELIX_GLOW
+	var torn := shirt.darkened(0.45)
+	var root := Node3D.new()
+	var hips := Node3D.new()
+	hips.position.y = 0.9
+	root.add_child(hips)
+	var parts := {"root": root, "hips": hips, "thighs": [], "shins": [], "feet": []}
+	box(hips, Vector3(0.33, 0.2, 0.21), Vector3.ZERO, pants)
+	for side in [-1, 1]:
+		var thigh := Node3D.new()
+		thigh.position = Vector3(0.1 * side, -0.02, 0)
+		hips.add_child(thigh)
+		box(thigh, Vector3(0.17, 0.26, 0.19), Vector3(0, -0.12, 0), pants)
+		box(thigh, Vector3(0.15, 0.22, 0.17), Vector3(0, -0.33, -0.005), pants)
+		if not first and rng.randf() < 0.5:
+			box(thigh, Vector3(0.155, 0.08, 0.175), Vector3(0, -0.36, -0.005), skin)  # torn trouser leg
+		if first:
+			_glow(thigh, Vector3(0.02, 0.4, 0.02), Vector3(0.087 * side, -0.22, 0), glow, 2.0)
+		var shin := Node3D.new()
+		shin.position.y = -0.44
+		thigh.add_child(shin)
+		box(shin, Vector3(0.14, 0.12, 0.16), Vector3(0, -0.03, 0), pants)
+		box(shin, Vector3(0.135, 0.24, 0.145), Vector3(0, -0.19, 0.01), pants if first or rng.randf() < 0.6 else skin)
+		box(shin, Vector3(0.13, 0.12, 0.15), Vector3(0, -0.3, 0), BOOT if first or mutant else pants.darkened(0.3))
+		var foot := Node3D.new()
+		foot.position.y = -0.36
+		shin.add_child(foot)
+		var shoe := BOOT if first else ([Color(0.15, 0.13, 0.12), Color(0.8, 0.8, 0.78), Color(0.2, 0.2, 0.25)][rng.randi() % 3] as Color)
+		if not first and not mutant and rng.randf() < 0.25:
+			shoe = skin  # barefoot
+		box(foot, Vector3(0.13, 0.08, 0.16), Vector3(0, -0.025, 0), shoe)
+		box(foot, Vector3(0.12, 0.06, 0.14), Vector3(0, -0.04, -0.12), shoe)
+		box(foot, Vector3(0.135, 0.025, 0.29), Vector3(0, -0.07, -0.06), shoe.darkened(0.5))
+		parts["thighs"].append(thigh)
+		parts["shins"].append(shin)
+		parts["feet"].append(foot)
+	var torso := Node3D.new()
+	hips.add_child(torso)
+	box(torso, Vector3(0.32, 0.24, 0.2), Vector3(0, 0.14, 0), shirt)
+	box(torso, Vector3(0.41, 0.3, 0.23), Vector3(0, 0.38, 0), shirt)
+	box(torso, Vector3(0.45, 0.12, 0.21), Vector3(0, 0.52, 0), shirt)
+	for side in [-1, 1]:
+		box(torso, Vector3(0.14, 0.15, 0.17), Vector3(0.24 * side, 0.5, 0), shirt.darkened(0.06), 0.0, Vector3(0, 0, 0.25 * side))
+	if first:
+		box(torso, Vector3(0.36, 0.3, 0.05), Vector3(0, 0.4, -0.13), Color(0.1, 0.11, 0.12), 0.5)  # armour
+		box(torso, Vector3(0.36, 0.32, 0.05), Vector3(0, 0.4, 0.13), Color(0.1, 0.11, 0.12), 0.5)
+		_glow(torso, Vector3(0.02, 0.26, 0.02), Vector3(0, 0.4, -0.16), glow)
+		for side in [-1, 1]:
+			_glow(torso, Vector3(0.12, 0.015, 0.02), Vector3(0.11 * side, 0.46, -0.16), glow)
+			_glow(torso, Vector3(0.015, 0.2, 0.02), Vector3(0.15 * side, 0.35, 0.16), glow)
+		box(torso, Vector3(0.14, 0.2, 0.08), Vector3(0, 0.42, 0.19), Color(0.08, 0.08, 0.09), 0.5)  # core unit
+		_glow(torso, Vector3(0.06, 0.06, 0.02), Vector3(0, 0.44, 0.235), glow, 5.0)
+	else:
+		# Rips in the clothes, stains, and HELIX growing out of the skin.
+		for i in rng.randi_range(2, 5):
+			box(torso, Vector3(rng.randf_range(0.05, 0.12), rng.randf_range(0.04, 0.1), 0.01),
+					Vector3(rng.randf_range(-0.15, 0.15), rng.randf_range(0.15, 0.5), -0.116 if rng.randf() < 0.6 else 0.116), skin if rng.randf() < 0.5 else torn)
+		box(torso, Vector3(0.2, 0.14, 0.01), Vector3(rng.randf_range(-0.08, 0.08), rng.randf_range(0.2, 0.4), -0.117), Color(0.3, 0.05, 0.04))  # blood
+		for i in (6 if mutant else rng.randi_range(0, 2)):
+			var at := Vector3(rng.randf_range(-0.2, 0.2), rng.randf_range(0.3, 0.6), 0.12 if mutant or rng.randf() < 0.5 else -0.12)
+			var s := rng.randf_range(0.04, 0.09) * (1.8 if mutant else 1.0)
+			box(torso, Vector3(s, s, s), at, skin.darkened(0.2))
+			_glow(torso, Vector3(s, s, s) * 0.5, at + Vector3(0, 0, signf(at.z) * s * 0.4), glow, 2.5)
+		if mutant:
+			box(torso, Vector3(0.5, 0.2, 0.3), Vector3(0.06, 0.6, 0.06), skin.darkened(0.1))  # a hunched mass on the shoulders
+			box(torso, Vector3(0.22, 0.18, 0.2), Vector3(0.2, 0.66, 0.08), skin.darkened(0.15))
+	var head := Node3D.new()
+	head.position.y = 0.64
+	torso.add_child(head)
+	box(head, Vector3(0.1, 0.1, 0.1), Vector3(0, 0.02, 0.005), skin.darkened(0.15))
+	if first:
+		box(head, Vector3(0.22, 0.25, 0.24), Vector3(0, 0.16, 0.005), Color(0.08, 0.09, 0.1), 0.5)  # helmet
+		box(head, Vector3(0.2, 0.06, 0.03), Vector3(0, 0.17, -0.118), Color(0.02, 0.02, 0.02), 0.8)
+		_glow(head, Vector3(0.18, 0.025, 0.01), Vector3(0, 0.17, -0.135), glow, 5.0)  # visor
+		box(head, Vector3(0.24, 0.04, 0.2), Vector3(0, 0.27, 0.02), Color(0.08, 0.09, 0.1), 0.5)
+	else:
+		box(head, Vector3(0.19, 0.2, 0.21), Vector3(0, 0.16, 0.005), skin)
+		box(head, Vector3(0.16, 0.08 if not mutant else 0.12, 0.17), Vector3(0, 0.06 if not mutant else 0.03, -0.015), skin)  # jaw
+		box(head, Vector3(0.1, 0.012, 0.012), Vector3(0, 0.07 if not mutant else 0.03, -0.1), Color(0.2, 0.04, 0.04))  # mouth
+		box(head, Vector3(0.034, 0.05, 0.035), Vector3(0, 0.135, -0.115), skin.darkened(0.08))
+		for side in [-1, 1]:
+			box(head, Vector3(0.05, 0.035, 0.012), Vector3(0.043 * side, 0.165, -0.101), Color(0.05, 0.03, 0.03))  # sunken sockets
+			_glow(head, Vector3(0.018, 0.014, 0.01), Vector3(0.043 * side, 0.165, -0.106), glow, 4.0)
+			box(head, Vector3(0.025, 0.06, 0.045), Vector3(0.1 * side, 0.15, 0.01), skin.darkened(0.08))
+		for i in 3:
+			box(head, Vector3(0.012, rng.randf_range(0.05, 0.1), 0.006), Vector3(rng.randf_range(-0.08, 0.08), 0.13, -0.104), skin.darkened(0.35))  # dark veins
+		if not mutant and rng.randf() < 0.7:
+			var hair: Color = HAIR[rng.randi() % HAIR.size()]
+			box(head, Vector3(0.2, 0.06, 0.22), Vector3(0.01, 0.27, 0.01), hair)
+			box(head, Vector3(0.12, 0.08, 0.05), Vector3(-0.03, 0.22, 0.1), hair)
+		if mutant:
+			_glow(head, Vector3(0.06, 0.06, 0.06), Vector3(0.06, 0.26, 0.03), glow, 2.5)
+	var aim := Node3D.new()
+	aim.position = Vector3(0, 0.5, 0)
+	torso.add_child(aim)
+	parts["torso"] = torso
+	parts["head"] = head
+	parts["aim"] = aim
+	var hand := GLOVE if first else skin
+	parts["arm_color"] = [shirt, shirt if first or rng.randf() < 0.5 else skin, hand, "mutant" if mutant else ""]
+	for part in [hips, torso, head] + parts["thighs"] + parts["shins"] + parts["feet"]:
+		merge(part)
+	return parts
+
+
 ## An arm from shoulder to hand, bent at the elbow, with a gloved hand closed around the grip.
 static func _arm(parent: Node3D, shoulder: Vector3, hand: Vector3, colors: Array, side: float) -> void:
 	var reach := shoulder.distance_to(hand)
@@ -546,6 +766,24 @@ static func arm_soldier(aim: Node3D, id: String, arm_colors: Array) -> Node3D:
 			_arm(aim, Vector3(0.23 * side, 0, 0.02), Vector3(0.27 * side, -0.55, -0.06), arm_colors, side)
 		merge(aim)
 		return null
+	if _kind(id) == "claws":
+		var club: bool = arm_colors.size() > 3 and arm_colors[3] == "mutant"
+		for side in [-1.0, 1.0]:
+			var hand := Vector3(0.2 * side, -0.2, -0.5)
+			_arm(aim, Vector3(0.23 * side, 0, 0.02), hand, arm_colors, side)
+			for i in 3:
+				box(aim, Vector3(0.015, 0.015, 0.09), hand + Vector3((i - 1) * 0.025, -0.02, -0.07), Color(0.2, 0.18, 0.15), 0.0, Vector3(-0.4, 0, 0))  # claws
+			if club and side > 0:
+				limb(aim, Vector3(0.24, -0.05, -0.1), hand + Vector3(0, -0.05, -0.1), 0.2, (arm_colors[2] as Color).darkened(0.1))
+				box(aim, Vector3(0.24, 0.22, 0.26), hand + Vector3(0.02, -0.06, -0.2), (arm_colors[2] as Color).darkened(0.2))
+				for i in 4:
+					box(aim, Vector3(0.03, 0.03, 0.14), hand + Vector3(-0.08 + i * 0.05, 0.08, -0.26), Color(0.85, 0.8, 0.7), 0.0, Vector3(-0.8, 0, 0))  # bone spurs
+				_glow(aim, Vector3(0.08, 0.08, 0.08), hand + Vector3(0.1, 0.0, -0.15), HELIX_GLOW, 2.5)
+		var claws := gun(id)
+		claws.position = Vector3(0, -0.2, -0.3)
+		aim.add_child(claws)
+		merge(aim)
+		return claws
 	var g := gun(id)
 	var grip := Vector3(0.1, -0.12, -0.38)
 	if _kind(id) in ["pistol", "magnum", "knife", "he", "flash", "smoke", "bomb"]:

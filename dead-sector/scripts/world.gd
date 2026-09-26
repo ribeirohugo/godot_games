@@ -2,6 +2,12 @@ extends Node3D
 ## The map: builds it from its ASCII grid (see maps.gd) and answers questions about it (paths, sight
 ## lines, bomb sites). It also runs everything that lives on the map rather than in a soldier: bullet
 ## traces and their marks, dropped weapons, grenades, smoke clouds, explosions and small effects.
+##
+## Campaign maps add a "legend" that gives more characters a meaning: other walls ({"solid": "wall"}),
+## other waist-high cover ({"solid": "low"}), glass walls ({"solid": "glass"}), floors ({"floor": kind}),
+## water ({"water": true}) and props that fill their cell ({"block": height}). Every other legend
+## character is plain floor here; the mission (mission.gd) puts its things there. Doors shut cells
+## (set_blocked) and floors can fall away (add_pit) while playing.
 
 const Tex := preload("res://scripts/textures.gd")
 const Models := preload("res://scripts/models.gd")
@@ -19,6 +25,16 @@ const LAYER_WORLD := 1
 const LAYER_ATT := 2  # attackers' bodies: they block the other side, not their own
 const LAYER_DEF := 4
 const LAYER_HIT := 8  # hitboxes, only for shots
+const LAYER_X := 16  # a third side in the campaign: the HELIX creatures
+
+
+static func team_layer(team: String) -> int:
+	return {"att": LAYER_ATT, "def": LAYER_DEF}.get(team, LAYER_X)
+
+
+## A body bumps into the world and into every side but its own.
+static func team_mask(team: String) -> int:
+	return LAYER_WORLD | ((LAYER_ATT | LAYER_DEF | LAYER_X) & ~team_layer(team))
 
 var game  # main.gd
 var rules  # rules.gd
@@ -32,6 +48,14 @@ var spawns := {"att": [], "def": []}
 var sites := {}  # "a" / "b" -> Rect2i of cells
 var roofs: Array = []  # [Rect2i, height]
 var hold_spots := {}  # site -> cells next to cover, the ones deepest in the site (for attackers) first
+var legend := {}  # map character -> its meaning (campaign maps)
+var walls := {}  # character -> legend entry, for walls other than "#"
+var lows := {}  # character -> legend entry, for waist-high cover other than "-"
+var glass := {}  # characters that are glass walls
+var water := {}  # cells under shallow water
+var props := {}  # cell -> height of the prop that fills it
+var blocked := {}  # cells shut by a closed door
+var pits := {}  # cells whose floor has fallen away
 
 var drops: Array[Node3D] = []
 var grenades: Array = []  # {node, vel, kind, owner, t, still}
@@ -55,8 +79,39 @@ func build(game_ref, rules_ref, map_data: Dictionary) -> void:
 	for row in rows:
 		width = maxi(width, row.length())
 	wall_height = data["wall_height"]
-	sites = data["sites"]
-	roofs = data["roofs"]
+	sites = data.get("sites", {})
+	roofs = data.get("roofs", []).duplicate()
+	if data.has("roofed"):
+		roofs.append([Rect2i(0, 0, width, depth), data["roofed"]])
+	legend = data.get("legend", {})
+	for ch: String in legend:
+		var entry: Dictionary = legend[ch]
+		match entry.get("solid", ""):
+			"wall":
+				walls[ch] = entry
+			"low":
+				lows[ch] = entry
+			"glass":
+				glass[ch] = entry
+	for z in depth:
+		for x in rows[z].length():
+			var entry: Dictionary = legend.get(rows[z][x], {})
+			if entry.get("water", false):
+				water[Vector2i(x, z)] = true
+			if entry.has("block"):
+				props[Vector2i(x, z)] = float(entry["block"])
+	# Interiors: legend characters with a "roof" height get a roof, merged into rectangles.
+	var under := {}  # height -> {cell: true}
+	for z in depth:
+		for x in rows[z].length():
+			var entry: Dictionary = legend.get(rows[z][x], {})
+			if entry.has("roof"):
+				var h: float = entry["roof"]
+				if not under.has(h):
+					under[h] = {}
+				under[h][Vector2i(x, z)] = true
+	for h: float in under:
+		roofs.append_array(_rectangles(under[h], h))
 	hole_mesh = QuadMesh.new()
 	hole_mesh.size = Vector2(0.09, 0.09)
 	hole_mat = Tex.flat(Color(0.06, 0.05, 0.04))
@@ -87,7 +142,40 @@ func char_at(c: Vector2i) -> String:
 
 
 func is_solid(c: Vector2i) -> bool:
-	return SOLID.contains(char_at(c))
+	var ch := char_at(c)
+	return SOLID.contains(ch) or walls.has(ch) or lows.has(ch) or glass.has(ch) or props.has(c) or blocked.has(c)
+
+
+## True for full-height walls of any kind (and outside the map).
+func is_wall(c: Vector2i) -> bool:
+	var ch := char_at(c)
+	return ch == "#" or walls.has(ch) or glass.has(ch)
+
+
+func _is_wall_char(ch: String) -> bool:
+	return ch == "#" or walls.has(ch)
+
+
+## How fast one can move at p: wading through water is slow.
+func slow_at(p: Vector3) -> float:
+	return 0.62 if water.has(cell_of(p)) else 1.0
+
+
+## Shuts or opens cell c for walking (doors).
+func set_blocked(c: Vector2i, on: bool) -> void:
+	if on:
+		blocked[c] = true
+	else:
+		blocked.erase(c)
+	if astar.is_in_boundsv(c):
+		astar.set_point_solid(c, is_solid(c) or pits.has(c))
+
+
+## The floor of cell c falls away: nobody can walk there any more.
+func add_pit(c: Vector2i) -> void:
+	pits[c] = true
+	if astar.is_in_boundsv(c):
+		astar.set_point_solid(c, true)
 
 
 func cell_of(p: Vector3) -> Vector2i:
@@ -100,12 +188,15 @@ func center(c: Vector2i, y := 0.0) -> Vector3:
 
 ## Height of the ground at p: crate tops count, so dropped things can land on them.
 func ground_at(p: Vector3) -> float:
-	match char_at(cell_of(p)):
+	var c := cell_of(p)
+	match char_at(c):
 		"c", "-":
 			return CRATE
 		"C":
 			return CRATE * 2.0
-	return 0.0
+	if lows.has(char_at(c)):
+		return CRATE
+	return props.get(c, 0.0)
 
 
 ## The bomb site p stands in, or "".
@@ -287,7 +378,8 @@ func fire_bullet(shooter, from: Vector3, dir: Vector3, weapon: Dictionary, id: S
 		var dist := from.distance_to(end)
 		var damage: float = weapon["damage"] * pow(weapon.get("falloff", 1.0), dist / 12.7)
 		target.take_hit(damage, hit["group"], shooter, id, dir, weapon.get("pen", 0.5))
-		burst(end, Color(0.55, 0.03, 0.03), 5, 2.5, 0.05)
+		var blood: Color = target.blood
+		burst(end, blood, 5, 2.5, 0.05, 3.0 if blood.v > 0.8 else 0.0)
 	else:
 		mark(end, hit["normal"])
 		var n: Vector3 = hit["normal"]
@@ -467,7 +559,7 @@ func _update_drops(delta: float) -> void:
 			continue
 		vel.y -= GRAVITY * delta
 		var next: Vector3 = d.position + vel * delta
-		if is_solid(cell_of(next)) and next.y < ground_at(next) - 0.05 or char_at(cell_of(next)) in ["#", "o"]:
+		if is_solid(cell_of(next)) and next.y < ground_at(next) - 0.05 or is_wall(cell_of(next)) or char_at(cell_of(next)) == "o":
 			next.x = d.position.x
 			next.z = d.position.z
 			vel.x = 0.0
@@ -683,9 +775,13 @@ func _environment() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.7
+	env.ambient_light_energy = data.get("ambient", 0.7)
+	if data.has("ambient_color"):
+		# Night and indoors: a set fill light, so the dark stays readable.
+		env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+		env.ambient_light_color = data["ambient_color"]
 	env.tonemap_mode = Environment.TONE_MAPPER_ACES
-	env.tonemap_exposure = 1.0
+	env.tonemap_exposure = data.get("exposure", 1.0)
 	env.tonemap_white = 6.0
 	# Contact shadows in corners and under crates, and a soft bloom on bright things.
 	env.ssao_enabled = true
@@ -696,24 +792,34 @@ func _environment() -> void:
 	env.ssil_radius = 4.0
 	env.ssil_intensity = 0.8
 	env.glow_enabled = true
-	env.glow_intensity = 0.35
+	env.glow_intensity = data.get("glow", 0.35)
 	env.glow_bloom = 0.04
 	env.glow_hdr_threshold = 1.2
 	env.adjustment_enabled = true
 	env.adjustment_contrast = 1.08
 	env.adjustment_saturation = 1.08
 	env.fog_enabled = true
-	env.fog_light_color = data["horizon"]
-	env.fog_density = 0.0035
-	env.fog_sky_affect = 0.0
+	env.fog_light_color = data.get("fog_color", data["horizon"])
+	env.fog_density = data.get("fog", 0.0035)
+	env.fog_sky_affect = data.get("fog_sky", 0.0)
+	if data.has("haze"):
+		# Volumetric fog: light shafts from lamps and fires in the dark.
+		env.volumetric_fog_enabled = true
+		env.volumetric_fog_density = data["haze"]
+		env.volumetric_fog_albedo = data.get("haze_color", Color(0.8, 0.8, 0.85))
+		env.volumetric_fog_length = 48.0
+		env.volumetric_fog_ambient_inject = 0.3
+	if water.size() > 0:
+		env.ssr_enabled = true
+		env.ssr_max_steps = 48
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
 	add_child(world_env)
 	var sun := DirectionalLight3D.new()
 	sun.rotation_degrees = data["sun"]
 	sun.light_color = data["sun_color"]
-	sun.light_energy = 1.35
-	sun.shadow_enabled = true
+	sun.light_energy = data.get("sun_energy", 1.35)
+	sun.shadow_enabled = sun.light_energy > 0.05
 	sun.shadow_blur = 0.8
 	sun.shadow_bias = 0.03
 	sun.shadow_normal_bias = 1.2
@@ -733,12 +839,15 @@ func _build_level() -> void:
 	for z in depth:
 		var x := 0
 		while x < width:
-			if char_at(Vector2i(x, z)) == "#" and _exposed(Vector2i(x, z)):
+			var ch := char_at(Vector2i(x, z))
+			if _is_wall_char(ch) and _exposed(Vector2i(x, z)):
 				var start := x
-				while x + 1 < width and char_at(Vector2i(x + 1, z)) == "#" and _exposed(Vector2i(x + 1, z)):
+				while x + 1 < width and char_at(Vector2i(x + 1, z)) == ch and _exposed(Vector2i(x + 1, z)):
 					x += 1
 				var length := (x - start + 1) * CELL
-				add_box.call("wall", Vector3(start * CELL + length / 2.0, wall_height / 2.0, (z + 0.5) * CELL), Vector3(length, wall_height, CELL))
+				var h: float = walls[ch].get("height", wall_height) if walls.has(ch) else wall_height
+				var key := "wall" if ch == "#" else "wall:" + ch
+				add_box.call(key, Vector3(start * CELL + length / 2.0, h / 2.0, (z + 0.5) * CELL), Vector3(length, h, CELL))
 			x += 1
 	var crates: Array = []
 	for z in depth:
@@ -758,6 +867,29 @@ func _build_level() -> void:
 					add_box.call("low", center(c, CRATE / 2.0), size)
 				"o":
 					add_box.call("pillar", center(c, wall_height / 2.0), Vector3(1.0, wall_height, 1.0))
+				_:
+					var ch := rows[z][x]
+					if lows.has(ch):
+						var along := char_at(c + Vector2i(1, 0)) == ch or char_at(c + Vector2i(-1, 0)) == ch
+						var lone := not along and char_at(c + Vector2i(0, 1)) != ch and char_at(c + Vector2i(0, -1)) != ch
+						var size := Vector3(CELL, CRATE, 1.0) if along else Vector3(1.0, CRATE, CELL)
+						if lone:
+							size = Vector3(1.6, CRATE, 1.6)
+						add_box.call("low:" + ch, center(c, CRATE / 2.0), size)
+					elif glass.has(ch):
+						var h: float = glass[ch].get("height", wall_height)
+						var along := glass.has(char_at(c + Vector2i(1, 0))) or glass.has(char_at(c + Vector2i(-1, 0)))
+						var pane := Vector3(CELL, h - 0.3, 0.1) if along else Vector3(0.1, h - 0.3, CELL)
+						add_box.call("glass", center(c, 0.15 + (h - 0.3) / 2.0), pane)
+						var sill := Vector3(CELL, 0.3, 0.3) if along else Vector3(0.3, 0.3, CELL)
+						add_box.call("frame", center(c, 0.15), sill)
+						add_box.call("frame", center(c, h - 0.1), Vector3(sill.x, 0.2, sill.z))
+	var roofed := {}
+	for roof: Array in roofs:
+		var r: Rect2i = roof[0]
+		for y in range(r.position.y, r.end.y):
+			for x in range(r.position.x, r.end.x):
+				roofed[Vector2i(x, y)] = roof[1]
 	for roof: Array in roofs:
 		var r: Rect2i = roof[0]
 		var h: float = roof[1]
@@ -767,11 +899,11 @@ func _build_level() -> void:
 		for y in range(r.position.y, r.end.y):
 			for x in range(r.position.x, r.end.x):
 				var c := Vector2i(x, y)
-				if is_solid(c) and char_at(c) == "#":
+				if _is_wall_char(char_at(c)):
 					continue
 				for d: Vector2i in [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]:
 					var n := c + d
-					if r.has_point(n) or char_at(n) == "#":
+					if roofed.has(n) or _is_wall_char(char_at(n)):
 						continue
 					var edge := center(c) + Vector3(d.x, 0, d.y) * (CELL / 2.0)
 					var header_h := wall_height - h
@@ -781,8 +913,14 @@ func _build_level() -> void:
 		"wall": Tex.surface(data["wall"], 4.0, data["wall_tint"]),
 		"low": Tex.surface(data["low"], 2.0, Color(0.92, 0.9, 0.86)),
 		"pillar": Tex.surface(data["pillar"], 2.0),
-		"roof": Tex.surface(data["roof"], 4.0, Color(0.8, 0.8, 0.8)),
+		"roof": Tex.surface(data["roof"], 4.0, data.get("roof_tint", Color(0.8, 0.8, 0.8))),
+		"glass": Tex.glass(),
+		"frame": Tex.flat(Color(0.22, 0.24, 0.26), 0.0, 0.6),
 	}
+	for ch: String in walls:
+		materials["wall:" + ch] = Tex.surface(walls[ch].get("tex", data["wall"]), walls[ch].get("meters", 4.0), walls[ch].get("tint", Color.WHITE))
+	for ch: String in lows:
+		materials["low:" + ch] = Tex.surface(lows[ch].get("tex", data["low"]), 2.0, lows[ch].get("tint", Color.WHITE))
 	var mesh := ArrayMesh.new()
 	var body := StaticBody3D.new()
 	body.collision_layer = LAYER_WORLD
@@ -814,8 +952,38 @@ func _build_level() -> void:
 		add_child(part)
 		_collider(body, crate[0], crate[1], crate[2])
 	_build_floor(body)
+	_build_water()
 	_site_marks()
 	DressingScript.new().build(self, body)
+
+
+## Covers a set of cells with as few rectangles as it takes: [[Rect2i, h], ...].
+static func _rectangles(cells: Dictionary, h: float) -> Array:
+	var left := cells.duplicate()
+	var out: Array = []
+	var keys := left.keys()
+	keys.sort_custom(func(a: Vector2i, b: Vector2i) -> bool: return a.y < b.y or a.y == b.y and a.x < b.x)
+	for c: Vector2i in keys:
+		if not left.has(c):
+			continue
+		var w := 1
+		while left.has(c + Vector2i(w, 0)):
+			w += 1
+		var rows_down := 1
+		while true:
+			var full := true
+			for i in w:
+				if not left.has(c + Vector2i(i, rows_down)):
+					full = false
+					break
+			if not full:
+				break
+			rows_down += 1
+		for y in rows_down:
+			for i in w:
+				left.erase(c + Vector2i(i, y))
+		out.append([Rect2i(c.x, c.y, w, rows_down), h])
+	return out
 
 
 ## True when a wall cell touches an open cell (other walls are never seen).
@@ -823,7 +991,7 @@ func _exposed(c: Vector2i) -> bool:
 	for dz in range(-1, 2):
 		for dx in range(-1, 2):
 			var n := c + Vector2i(dx, dz)
-			if n.x >= 0 and n.y >= 0 and n.x < width and n.y < depth and char_at(n) != "#":
+			if n.x >= 0 and n.y >= 0 and n.x < width and n.y < depth and not _is_wall_char(char_at(n)):
 				return true
 	return false
 
@@ -867,9 +1035,13 @@ func _build_floor(body: StaticBody3D) -> void:
 	for z in depth:
 		for x in rows[z].length():
 			var ch := rows[z][x]
-			if ch == "#":
+			if _is_wall_char(ch):
 				continue
 			var key: String = data["paved"] if ch == "," else data["floor"]
+			if legend.has(ch) and legend[ch].has("floor"):
+				key = legend[ch]["floor"]
+			elif legend.has(ch):
+				key = _floor_near(x, z)  # things placed on the map stand on the floor around them
 			if not kinds.has(key):
 				var new_st := SurfaceTool.new()
 				new_st.begin(Mesh.PRIMITIVE_TRIANGLES)
@@ -883,7 +1055,7 @@ func _build_floor(body: StaticBody3D) -> void:
 	var mesh := ArrayMesh.new()
 	for key: String in kinds:
 		(kinds[key] as SurfaceTool).commit(mesh)
-		mesh.surface_set_material(mesh.get_surface_count() - 1, Tex.surface(key, 4.0 if key == data["floor"] else 2.0))
+		mesh.surface_set_material(mesh.get_surface_count() - 1, Tex.surface(key, 4.0 if key == data["floor"] else 2.0, data.get("floor_tint", Color.WHITE)))
 	var floor_mesh := MeshInstance3D.new()
 	floor_mesh.mesh = mesh
 	floor_mesh.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
@@ -892,6 +1064,37 @@ func _build_floor(body: StaticBody3D) -> void:
 	var col := CollisionShape3D.new()
 	col.shape = plane
 	body.add_child(col)
+
+
+## The floor kind of the nearest plain ground cell in the same row.
+func _floor_near(x: int, z: int) -> String:
+	for step in range(1, 8):
+		for nx in [x - step, x + step]:
+			var ch := char_at(Vector2i(nx, z))
+			if ch == ",":
+				return data["paved"]
+			if ch == ".":
+				return data["floor"]
+	return data["floor"]
+
+
+## A still, dark surface a little above the floor on flooded cells.
+func _build_water() -> void:
+	if water.is_empty():
+		return
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	for c: Vector2i in water:
+		var o := Vector3(c.x * CELL, 0.16, c.y * CELL)
+		var corners := [o, o + Vector3(CELL, 0, 0), o + Vector3(CELL, 0, CELL), o + Vector3(0, 0, CELL)]
+		for i: int in [0, 1, 2, 0, 2, 3]:
+			st.set_normal(Vector3.UP)
+			st.add_vertex(corners[i])
+	var surface := MeshInstance3D.new()
+	surface.mesh = st.commit()
+	surface.material_override = Tex.water()
+	surface.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(surface)
 
 
 ## Big painted letters and a border on each bomb site.

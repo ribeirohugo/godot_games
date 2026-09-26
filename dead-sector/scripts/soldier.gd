@@ -41,6 +41,11 @@ var is_human := false
 var nick := ""
 var squad := 0  # 0 is the player's squad
 var team := "att"
+var faction := ""  # the campaign's look for this soldier (models.gd UNIFORM); "" dresses by team
+var body_scale := 1.0  # the HELIX mutants are bigger
+var blood := Color(0.55, 0.03, 0.03)
+var down := 0.0  # 1 lying on the ground like the dead (a sleeping infected), 0 up
+var speed_boost := 1.0  # a creature leaping or charging
 var health := 100.0
 var armor := 0.0
 var helmet := false
@@ -123,11 +128,11 @@ func setup(world_ref, rules_ref, game_ref, side: String, squad_index: int, name_
 	is_human = human
 	floor_snap_length = 0.3
 	shape = CapsuleShape3D.new()
-	shape.radius = RADIUS
-	shape.height = HEIGHT
+	shape.radius = RADIUS * minf(body_scale, 1.15)
+	shape.height = HEIGHT * body_scale
 	col = CollisionShape3D.new()
 	col.shape = shape
-	col.position.y = HEIGHT / 2.0
+	col.position.y = shape.height / 2.0
 	add_child(col)
 	for group in ["head", "chest", "stomach", "legs"]:
 		var area := Area3D.new()
@@ -139,7 +144,7 @@ func setup(world_ref, rules_ref, game_ref, side: String, squad_index: int, name_
 		var hit_col := CollisionShape3D.new()
 		if group == "head":
 			var sphere := SphereShape3D.new()
-			sphere.radius = 0.14
+			sphere.radius = 0.14 * body_scale
 			hit_col.shape = sphere
 		else:
 			hit_col.shape = BoxShape3D.new()
@@ -152,11 +157,11 @@ func setup(world_ref, rules_ref, game_ref, side: String, squad_index: int, name_
 
 func set_team(side: String) -> void:
 	team = side
-	collision_layer = world.LAYER_ATT if team == "att" else world.LAYER_DEF
-	collision_mask = world.LAYER_WORLD | (world.LAYER_DEF if team == "att" else world.LAYER_ATT)
+	collision_layer = world.team_layer(team)
+	collision_mask = world.team_mask(team)
 	if parts.has("root"):
 		parts["root"].queue_free()
-	parts = Models.soldier(team, hash(nick))
+	parts = Models.soldier(faction if faction != "" else team, hash(nick))
 	add_child(parts["root"])
 	held = null
 	_arm()
@@ -184,8 +189,8 @@ func respawn(pos: Vector3, facing: float, keep: bool) -> void:
 	yaw = facing
 	pitch = 0.0
 	crouch = 0.0
-	shape.height = HEIGHT
-	col.position.y = HEIGHT / 2.0
+	shape.height = HEIGHT * body_scale
+	col.position.y = shape.height / 2.0
 	cooldown = 0.0
 	reload_t = 0.0
 	deploy_t = 0.0
@@ -200,8 +205,8 @@ func respawn(pos: Vector3, facing: float, keep: bool) -> void:
 	death_t = 0.0
 	hit_dir = Vector3.ZERO
 	_reset_pose()
-	collision_layer = world.LAYER_ATT if team == "att" else world.LAYER_DEF
-	collision_mask = world.LAYER_WORLD | (world.LAYER_DEF if team == "att" else world.LAYER_ATT)
+	collision_layer = world.team_layer(team)
+	collision_mask = world.team_mask(team)
 	for area in hitboxes:
 		area.collision_layer = world.LAYER_HIT
 	current = ""
@@ -364,7 +369,7 @@ func toggle_scope() -> void:
 
 
 func eye_height() -> float:
-	return lerpf(EYE, CROUCH_EYE, crouch)
+	return lerpf(EYE, CROUCH_EYE, crouch) * body_scale * (1.0 - down * 0.85)
 
 
 func eye_position() -> Vector3:
@@ -399,7 +404,7 @@ func max_speed() -> float:
 		speed *= CROUCHED
 	elif want_walk:
 		speed *= WALK
-	return speed
+	return speed * world.slow_at(position) * speed_boost
 
 
 ## How far off a shot can go right now, in radians.
@@ -524,11 +529,11 @@ func _move(delta: float) -> void:
 	if target < crouch and _blocked_above():
 		target = crouch
 	crouch = move_toward(crouch, target, delta * 7.0)
-	var h := lerpf(HEIGHT, CROUCH_HEIGHT, crouch)
+	var h := lerpf(HEIGHT, CROUCH_HEIGHT, crouch) * body_scale
 	if absf(shape.height - h) > 0.001:
 		shape.height = h
 		col.position.y = h / 2.0
-	var still := frozen or busy()
+	var still := frozen or busy() or down > 0.0
 	var input := Vector2.ZERO if still else move_input.limit_length(1.0)
 	var wish := Basis(Vector3.UP, yaw) * Vector3(input.x, 0, input.y)
 	var wish_speed := wish.length() * max_speed()
@@ -597,6 +602,8 @@ func _blocked_above() -> bool:
 
 func _footstep() -> void:
 	var sound := "step1" if randf() < 0.5 else "step2"
+	if world.water.has(world.cell_of(position)) and game.sfx.sounds.has("splash"):
+		sound = "splash"
 	if is_human:
 		game.sfx.play(sound, -12.0)
 	else:
@@ -721,11 +728,11 @@ func _knife(d: Dictionary) -> void:
 	var hit: Dictionary = world.trace(self, eye_position(), view_basis() * Vector3.FORWARD, d["reach"])
 	if not hit.is_empty() and hit["target"] != null:
 		var target = hit["target"]
-		# From behind the stab is lethal.
+		# From behind the stab is lethal (a knife's, not a creature's claws).
 		var facing: Vector3 = Basis(Vector3.UP, target.yaw) * Vector3.FORWARD
-		var from_behind := facing.dot((target.position - position).normalized()) > 0.5
+		var from_behind := current == "knife" and facing.dot((target.position - position).normalized()) > 0.5
 		target.take_hit(d["damage"] * (4.5 if from_behind else 1.0), "knife", self, "knife", facing, d["pen"])
-		_sound("knife_hit")
+		_sound("claw_hit" if current != "knife" and game.sfx.sounds.has("claw_hit") else "knife_hit")
 	elif not hit.is_empty():
 		world.mark(hit["pos"], hit["normal"])
 		_sound("knife_hit", -6.0)
@@ -806,7 +813,7 @@ func take_hit(amount: float, group: String, attacker, weapon: String, dir: Vecto
 			mult = Weapons.STOMACH
 		"legs":
 			mult = Weapons.LEGS
-	var damage := amount * mult
+	var damage: float = amount * mult * rules.damage_scale(self, attacker)
 	var armored := armor > 0.0 and group != "legs" and (group != "head" or helmet)
 	if armored:
 		var through := damage * pen
@@ -830,9 +837,9 @@ func take_hit(amount: float, group: String, attacker, weapon: String, dir: Vecto
 func take_blast(amount: float, attacker, weapon: String) -> void:
 	if not alive or amount <= 0.0:
 		return
-	var damage := amount
+	var damage: float = amount * rules.damage_scale(self, attacker)
 	if armor > 0.0:
-		var soaked := minf(amount * 0.5, armor * 2.0)
+		var soaked := minf(damage * 0.5, armor * 2.0)
 		armor = maxf(armor - soaked * 0.5, 0.0)
 		damage -= soaked
 	_harm(damage, attacker, weapon, false, Vector3.ZERO)
@@ -851,7 +858,9 @@ func _harm(damage: float, attacker, weapon: String, headshot: bool, dir: Vector3
 	if is_human:
 		game.vibrate(clampf(damage / 40.0, 0.2, 1.0), 0.15)
 		game.shake(clampf(damage / 60.0, 0.1, 0.6))
-	if health <= 0.0:
+	if health <= 0.0 and rules.spare(self):
+		health = 1.0  # a campaign ally is wounded, never killed
+	elif health <= 0.0:
 		_die(attacker, weapon, headshot)
 	elif randf() < 0.35:
 		_sound("pain", -4.0)
@@ -919,14 +928,16 @@ func _arm() -> void:
 
 
 func _update_hitboxes() -> void:
-	var legs := lerpf(0.86, 0.46, crouch)
-	var stomach := lerpf(0.3, 0.26, crouch)
-	var chest := lerpf(0.4, 0.34, crouch)
-	var ahead := Basis(Vector3.UP, yaw) * Vector3(0, 0, -0.66 * sin(lean.y))  # the upper body leans forwards
-	_place_box("legs", Vector3(0.42, legs, 0.28), Vector3(0, legs / 2.0, 0))
-	_place_box("stomach", Vector3(0.46, stomach, 0.3), Vector3(0, legs + stomach / 2.0, 0) + ahead * 0.5)
-	_place_box("chest", Vector3(0.5, chest, 0.32), Vector3(0, legs + stomach + chest / 2.0, 0) + ahead)
-	(hit_shapes["head"] as CollisionShape3D).position = Vector3(0, eye_height() + 0.06, 0) + ahead * 1.2
+	var k := body_scale
+	var low := 1.0 - down * 0.8  # lying down
+	var legs := lerpf(0.86, 0.46, crouch) * k * low
+	var stomach := lerpf(0.3, 0.26, crouch) * k * low
+	var chest := lerpf(0.4, 0.34, crouch) * k * low
+	var ahead := Basis(Vector3.UP, yaw) * Vector3(0, 0, -0.66 * sin(lean.y)) * k  # the upper body leans forwards
+	_place_box("legs", Vector3(0.42 * k, legs, 0.28 * k), Vector3(0, legs / 2.0, 0))
+	_place_box("stomach", Vector3(0.46 * k, stomach, 0.3 * k), Vector3(0, legs + stomach / 2.0, 0) + ahead * 0.5)
+	_place_box("chest", Vector3(0.5 * k, chest, 0.32 * k), Vector3(0, legs + stomach + chest / 2.0, 0) + ahead)
+	(hit_shapes["head"] as CollisionShape3D).position = Vector3(0, eye_height() + 0.06 * k, 0) + ahead * 1.2
 
 
 func _place_box(group: String, size: Vector3, pos: Vector3) -> void:
@@ -939,7 +950,7 @@ func _place_box(group: String, size: Vector3, pos: Vector3) -> void:
 func _reset_pose() -> void:
 	if not parts.has("root"):
 		return
-	(parts["root"] as Node3D).transform = Transform3D(Basis(Vector3.UP, yaw), Vector3.ZERO)
+	(parts["root"] as Node3D).transform = Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * body_scale), Vector3.ZERO)
 	stride = 0.0
 	leg_yaw = 0.0
 	lean = Vector2.ZERO
@@ -958,10 +969,10 @@ func _animate(delta: float) -> void:
 	var thighs: Array = parts["thighs"]
 	var shins: Array = parts["shins"]
 	var feet: Array = parts["feet"]
-	if not alive:
-		_animate_death(root, hips, torso, head, aim, thighs, shins, feet)
+	if not alive or down > 0.0:
+		_animate_death(root, hips, torso, head, aim, thighs, shins, feet, death_t if not alive else down)
 		return
-	root.transform = Transform3D(Basis(Vector3.UP, yaw), Vector3.ZERO)
+	root.transform = Transform3D(Basis(Vector3.UP, yaw).scaled(Vector3.ONE * body_scale), Vector3.ZERO)
 	breath += delta
 	var flat := Vector3(velocity.x, 0, velocity.z)
 	var speed := flat.length()
@@ -1027,17 +1038,23 @@ func _animate(delta: float) -> void:
 	aim.rotation = Vector3(pitch + lean.y - breathe - flinch * 0.2 + kick * 0.07 - carry * 0.5 - tip * 0.45 - lower * 0.7 - reach * 0.9,
 			carry * 0.4 + tip * 0.2, -tip * 0.5)
 	aim.position = Vector3(0, 0.5, kick * 0.05)
+	if Weapons.data(current)["kind"] == "claws":
+		# A creature: hunched, arms reaching out and pumping as it runs, a raking swipe when it strikes.
+		var swipe := sin(clampf(since_shot / 0.35, 0.0, 1.0) * PI) if since_shot < 0.35 else 0.0
+		torso.rotation.x -= 0.25 + run * 0.2
+		head.rotation.x += 0.35 + run * 0.15
+		aim.rotation = Vector3(-0.15 + lean.y + run * 0.2 + sin(walk_phase) * 0.25 * run + swipe * 0.7, swipe * 0.9, sin(breath * 7.0) * 0.04)
 
 
 ## The knees give way, then the body topples the way the last shot pushed it and settles.
-func _animate_death(root: Node3D, hips: Node3D, torso: Node3D, head: Node3D, aim: Node3D, thighs: Array, shins: Array, feet: Array) -> void:
-	var buckle := smoothstep(0.0, 0.3, death_t)
-	var fall := clampf((death_t - 0.1) / 0.75, 0.0, 1.0)
+func _animate_death(root: Node3D, hips: Node3D, torso: Node3D, head: Node3D, aim: Node3D, thighs: Array, shins: Array, feet: Array, t: float) -> void:
+	var buckle := smoothstep(0.0, 0.3, t)
+	var fall := clampf((t - 0.1) / 0.75, 0.0, 1.0)
 	fall *= fall  # gravity
-	var settle := clampf((death_t - 0.85) / 0.15, 0.0, 1.0)
+	var settle := clampf((t - 0.85) / 0.15, 0.0, 1.0)
 	var axis := Vector3.UP.cross(fall_dir).normalized()
 	var angle := fall * 1.5 - sin(settle * PI) * 0.08
-	root.transform = Transform3D(Basis(axis, angle) * Basis(Vector3.UP, yaw + fall_roll * fall),
+	root.transform = Transform3D(Basis(axis, angle) * Basis(Vector3.UP, yaw + fall_roll * fall).scaled(Vector3.ONE * body_scale),
 			Vector3(0, 0.14 * fall, 0) + fall_dir * 0.15 * fall)
 	var fold := buckle * (1.0 - fall * 0.7)
 	for i in 2:

@@ -68,6 +68,15 @@ const LIST := {
 	"flash": {"name": "Flashbang", "slot": 3, "kind": "flash", "price": 200, "speed": 6.1, "rate": 1.0, "reward": 300},
 	"smoke": {"name": "Smoke Grenade", "slot": 3, "kind": "smoke", "price": 300, "speed": 6.1, "rate": 1.0, "reward": 300},
 	"bomb": {"name": "Bomb", "slot": 4, "kind": "bomb", "price": 0, "speed": 6.1, "rate": 0.5, "reward": 300},
+
+	# Campaign only (never in the shop): what the HELIX creatures fight with, and the First's rifle.
+	"claws": {"name": "Claws", "slot": 2, "kind": "claws", "price": 0, "damage": 16.0, "pen": 1.0,
+			"rate": 0.7, "reach": 2.0, "speed": 6.9, "reward": 0},
+	"maul": {"name": "Maul", "slot": 2, "kind": "claws", "price": 0, "damage": 42.0, "pen": 1.0,
+			"rate": 1.3, "reach": 2.6, "speed": 5.0, "reward": 0},
+	"helix": {"name": "HX-1", "slot": 0, "kind": "rifle", "price": 0, "damage": 24.0, "pen": 0.9, "auto": true,
+			"rate": 0.11, "mag": 40, "reserve": 999, "reload": 1.6, "speed": 6.4, "spread": 0.012, "move": 0.02,
+			"recoil": 0.01, "falloff": 0.97, "reward": 0},
 }
 
 ## What the buy menu offers, column by column. Gear ids are not weapons: rules.gd handles them.

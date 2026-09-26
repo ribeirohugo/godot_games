@@ -133,6 +133,16 @@ func scope_fov(s) -> float:
 	return d.get("ads", 74.0)
 
 
+## How much of the damage `attacker` does to `victim` goes through (the campaign's difficulty).
+func damage_scale(_victim, _attacker) -> float:
+	return 1.0
+
+
+## True when `victim` must not die (the campaign's allies); a match spares no one.
+func spare(_victim) -> bool:
+	return false
+
+
 func time_left() -> float:
 	if phase == "freeze":
 		return phase_t

@@ -40,17 +40,18 @@ func build(world_ref, body: StaticBody3D) -> void:
 	for z in world.depth:
 		for x in world.width:
 			var c := Vector2i(x, z)
-			if world.char_at(c) == "#":
+			if world.is_wall(c) or world.is_solid(c) and not world.char_at(c) in ["c", "C", "-", "o"]:
 				continue
 			var roofed := _roof_height(c) > 0.0
 			for d: Vector2i in DIRS:
-				if world.char_at(c + d) == "#":
+				if world.char_at(c + d) == "#" or world.walls.has(world.char_at(c + d)):
 					_wall_face(c, d, roofed)
 			_floor_bits(c)
 			_corner_props(c, body)
 			if world.char_at(c) == "-" and not desert:
 				_hazard(c)
-	_roof_lamps()
+	if world.data.get("auto_lamps", true):
+		_roof_lamps()
 	_commit()
 
 
@@ -203,7 +204,7 @@ func _corner_props(c: Vector2i, body: StaticBody3D) -> void:
 		return
 	var walls: Array[Vector2i] = []
 	for d: Vector2i in DIRS:
-		if world.char_at(c + d) == "#":
+		if world.is_wall(c + d):
 			walls.append(d)
 	if walls.size() != 2 or walls[0] + walls[1] == Vector2i.ZERO:
 		return

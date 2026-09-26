@@ -7,7 +7,8 @@ const SIZE := 128
 
 ## How strongly each surface's relief shows, and whether its light parts are the low ones (mortar).
 const RELIEF := {"sandstone": [-3.0], "tiles": [2.5], "slabs": [2.0], "plaster": [2.0], "wood": [3.0],
-		"concrete": [2.0], "asphalt": [1.5], "metal": [3.0], "sand": [1.5], "plain": [1.0]}
+		"concrete": [2.0], "asphalt": [1.5], "metal": [3.0], "sand": [1.5], "plain": [1.0], "brick": [-3.0],
+		"panel": [2.5], "grate": [4.0], "dirt": [2.0], "grass": [1.5], "whitetile": [2.0], "darkmetal": [3.0]}
 
 static var _textures := {}
 static var _normals := {}
@@ -49,8 +50,8 @@ static func surface(kind: String, meters := 2.0, tint := Color.WHITE, local := f
 		var mat := StandardMaterial3D.new()
 		mat.albedo_texture = texture(kind)
 		mat.albedo_color = tint
-		mat.roughness = 0.9 if kind != "metal" else 0.6
-		mat.metallic = 0.3 if kind == "metal" else 0.0
+		mat.roughness = 0.9 if not kind in ["metal", "darkmetal", "grate", "panel"] else 0.55
+		mat.metallic = 0.3 if kind in ["metal", "darkmetal", "grate"] else 0.0
 		mat.normal_enabled = true
 		mat.normal_texture = normal_texture(kind)
 		mat.normal_scale = 1.0
@@ -107,6 +108,37 @@ static func painted(metal := 0.0) -> StandardMaterial3D:
 		mat.vertex_color_is_srgb = true
 		_materials[key] = mat
 	return _materials[key]
+
+
+## Thick, faintly green safety glass.
+static func glass() -> StandardMaterial3D:
+	if not _materials.has("glass"):
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.55, 0.7, 0.68, 0.22)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.roughness = 0.05
+		mat.metallic = 0.4
+		mat.cull_mode = BaseMaterial3D.CULL_DISABLED
+		_materials["glass"] = mat
+	return _materials["glass"]
+
+
+## Dark, still, reflective water.
+static func water() -> StandardMaterial3D:
+	if not _materials.has("water"):
+		var mat := StandardMaterial3D.new()
+		mat.albedo_color = Color(0.06, 0.09, 0.08, 0.82)
+		mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		mat.roughness = 0.04
+		mat.metallic = 0.6
+		mat.normal_enabled = true
+		mat.normal_texture = normal_texture("plain")
+		mat.normal_scale = 0.4
+		mat.uv1_triplanar = true
+		mat.uv1_world_triplanar = true
+		mat.uv1_scale = Vector3.ONE * 0.5
+		_materials["water"] = mat
+	return _materials["water"]
 
 
 ## A fresh unshaded, see-through material, for effects that fade on their own.
@@ -240,6 +272,79 @@ static func _paint(kind: String) -> Image:
 					var rust := _tile(blotch, x + 40, y + 11)
 					if rust > 0.66:
 						c = c.lerp(Color(0.45, 0.25, 0.12), clampf((rust - 0.66) * 4.0, 0.0, 0.8))
+					img.set_pixel(x, y, c)
+		"brick":
+			# Red-brown bricks in stretcher bond, with grey mortar and soot.
+			var shades := {}
+			for y in SIZE:
+				for x in SIZE:
+					var row := y / 16
+					var bx := (x + (16 if row % 2 == 1 else 0)) % SIZE
+					var id := row * 4 + bx / 32
+					if not shades.has(id):
+						shades[id] = rng.randf_range(-0.1, 0.1)
+					var c := Color(0.52, 0.27, 0.19).lightened(shades[id])
+					c = c.darkened(0.1 - _tile(grain, x, y) * 0.16 + _tile(blotch, x, y) * 0.15)
+					if y % 16 < 2 or bx % 32 < 2:
+						c = Color(0.55, 0.53, 0.5).darkened(_tile(grain, x, y) * 0.2)
+					img.set_pixel(x, y, c)
+		"panel":
+			# Laboratory wall panels: pale, with seams, rivets and a dark kick strip.
+			for y in SIZE:
+				for x in SIZE:
+					var c := Color(0.78, 0.8, 0.8).darkened(0.04 + _tile(blotch, x, y) * 0.1 - _tile(grain, x, y) * 0.05)
+					if x % 64 < 2 or y % 64 < 2:
+						c = c.darkened(0.4)
+					elif x % 64 == 4 and y % 16 == 8:
+						c = c.darkened(0.3)
+					if y > SIZE - 10:
+						c = Color(0.25, 0.27, 0.28).darkened(_tile(grain, x, y) * 0.1)
+					img.set_pixel(x, y, c)
+		"grate":
+			# Steel floor grating over darkness.
+			for y in SIZE:
+				for x in SIZE:
+					var c := Color(0.04, 0.04, 0.045)
+					if x % 16 < 3 or y % 8 < 2:
+						c = Color(0.46, 0.47, 0.48).darkened(_tile(blotch, x, y) * 0.3 - _tile(grain, x, y) * 0.1)
+						var rust := _tile(blotch, x + 17, y + 5)
+						if rust > 0.68:
+							c = c.lerp(Color(0.42, 0.24, 0.12), 0.5)
+					img.set_pixel(x, y, c)
+		"dirt":
+			for y in SIZE:
+				for x in SIZE:
+					var n := _tile(blotch, x, y)
+					var c := Color(0.36, 0.30, 0.22).lerp(Color(0.45, 0.38, 0.27), n)
+					c = c.darkened(0.1 - _tile(grain, x, y) * 0.2)
+					if rng.randf() < 0.02:
+						c = c.lightened(0.2)
+					img.set_pixel(x, y, c)
+		"grass":
+			for y in SIZE:
+				for x in SIZE:
+					var n := _tile(blotch, x, y)
+					var c := Color(0.25, 0.3, 0.14).lerp(Color(0.38, 0.4, 0.2), n)
+					c = c.darkened(0.12 - _tile(grain, x, y) * 0.24)
+					if n < 0.3:
+						c = c.lerp(Color(0.4, 0.34, 0.24), 0.5)  # bare, trampled earth
+					img.set_pixel(x, y, c)
+		"whitetile":
+			for y in SIZE:
+				for x in SIZE:
+					var c := Color(0.82, 0.84, 0.83).darkened(0.03 + _tile(blotch, x, y) * 0.12 - _tile(grain, x, y) * 0.04)
+					if x % 32 < 2 or y % 32 < 2:
+						c = Color(0.45, 0.46, 0.45).darkened(_tile(blotch, x, y) * 0.3)
+					img.set_pixel(x, y, c)
+		"darkmetal":
+			# Black Division plating: dark panels with bolts and scuffs.
+			for y in SIZE:
+				for x in SIZE:
+					var c := Color(0.2, 0.21, 0.22).lightened(_tile(grain, x, y) * 0.08 - _tile(blotch, x, y) * 0.06)
+					if x % 64 < 2 or y % 32 < 2:
+						c = c.darkened(0.5)
+					elif (x % 64 == 6 or x % 64 == 58) and (y % 32 == 6 or y % 32 == 26):
+						c = c.lightened(0.3)
 					img.set_pixel(x, y, c)
 		_:  # "plain": lightly speckled white, tinted by the material
 			for y in SIZE:

@@ -28,6 +28,7 @@ var shake := 0.0
 var bob := 0.0
 var sway := Vector2.ZERO
 var last_view := Vector2.ZERO
+var torch: SpotLight3D  # the flashlight on the player's gun, in the campaign's dark places
 
 
 func setup(rules_ref, game_ref) -> void:
@@ -48,6 +49,20 @@ func setup(rules_ref, game_ref) -> void:
 	flash_light.shadow_enabled = false
 	camera.add_child(flash_light)
 	flash_light.position = Vector3(0.1, -0.1, -0.8)
+	torch = SpotLight3D.new()
+	torch.light_color = Color(1.0, 0.96, 0.88)
+	torch.light_energy = 3.2
+	torch.spot_range = 28.0
+	torch.spot_angle = 24.0
+	torch.spot_attenuation = 0.8
+	torch.shadow_enabled = true
+	torch.position = Vector3(-0.25, 0.12, 0.1)
+	torch.visible = false
+	camera.add_child(torch)
+
+
+func set_torch(on: bool) -> void:
+	torch.visible = on
 
 
 func on_round_start() -> void:
@@ -93,6 +108,9 @@ func _unhandled_input(event: InputEvent) -> void:
 
 func _process(delta: float) -> void:
 	shake = move_toward(shake, 0.0, delta * 2.5)
+	if rules.has_method("camera_override") and rules.camera_override(camera, delta):
+		hands.visible = false
+		return
 	var h = rules.human
 	if h.alive:
 		_first_person(h, delta)
@@ -111,6 +129,8 @@ func _process(delta: float) -> void:
 			var want := camera.global_transform.looking_at(killer.eye_position(), Vector3.UP)
 			camera.global_transform = camera.global_transform.interpolate_with(want, minf(delta * 4.0, 1.0))
 		return
+	if rules.get("campaign") != null:
+		return  # the campaign restarts from a checkpoint instead
 	if target == null or not target.alive:
 		next_target()
 	if target == null:
@@ -138,7 +158,7 @@ func _first_person(h, delta: float) -> void:
 	camera.position += camera.basis * offset
 	var fov: float = rules.scope_fov(h)
 	camera.fov = fov if h.scope > 0 else lerpf(camera.fov, fov, minf(delta * 12.0, 1.0))
-	if model_id != h.current or model_team != h.team:
+	if model_id != h.current or model_team != (h.faction if h.faction != "" else h.team):
 		_build_model(h)
 	var sniper: bool = Weapons.data(h.current).has("scope")
 	hands.visible = (h.scope == 0 or not sniper) and h.current != ""
@@ -188,9 +208,10 @@ func _first_person(h, delta: float) -> void:
 		pos.y -= 0.12
 		rot.x -= 0.4
 	if ads > 0.0:
-		# Bring the sights up to the eye: the rear sight straight ahead of it.
+		# Bring the gun up in the middle, its sights just under the aim point and far enough out that
+		# nothing of it hides what is being aimed at.
 		var eased := ads * ads * (3.0 - 2.0 * ads)
-		var aim_pos := Vector3(-sight.x, -sight.y, -Models.ads_distance(h.current) - sight.z)
+		var aim_pos := Vector3(-sight.x, -sight.y - 0.06, -maxf(Models.ads_distance(h.current), 0.32) - sight.z)
 		aim_pos.z += pos.z - hip_z  # keep the kick
 		pos = pos.lerp(aim_pos, eased)
 		rot = rot.lerp(Vector3(rot.x * 0.4, 0, rot.z * 0.3), eased)
@@ -209,7 +230,7 @@ func _build_model(h) -> void:
 		model = null
 		flash = null
 	model_id = h.current
-	model_team = h.team
+	model_team = h.faction if h.faction != "" else h.team
 	sight = Vector3.INF
 	h.view_muzzle = null
 	if model_id == "":
