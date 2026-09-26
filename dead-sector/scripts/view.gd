@@ -16,6 +16,8 @@ var hands: Node3D  # holds the first-person model
 var model: Node3D
 var model_id := ""
 var model_team := ""
+var sight := Vector3.INF  # where the eye lines up with the current gun's sights, in its own space
+var ads := 0.0  # 0 hip, 1 aiming down the sights
 var flash: MeshInstance3D
 var flash_light: OmniLight3D
 var target  # the soldier being watched after death
@@ -138,7 +140,10 @@ func _first_person(h, delta: float) -> void:
 	camera.fov = fov if h.scope > 0 else lerpf(camera.fov, fov, minf(delta * 12.0, 1.0))
 	if model_id != h.current or model_team != h.team:
 		_build_model(h)
-	hands.visible = h.scope == 0 and h.current != ""
+	var sniper: bool = Weapons.data(h.current).has("scope")
+	hands.visible = (h.scope == 0 or not sniper) and h.current != ""
+	var aiming: bool = h.scope > 0 and not sniper and sight != Vector3.INF
+	ads = move_toward(ads, 1.0 if aiming else 0.0, delta * 7.0)
 	# Sway: the gun lags a little behind the view.
 	var view := Vector2(h.yaw, h.pitch)
 	var turn := Vector2(angle_difference(last_view.x, view.x), view.y - last_view.y)
@@ -155,9 +160,11 @@ func _first_person(h, delta: float) -> void:
 		pos = Vector3(0.2, -0.2, -0.52)
 	elif kind in ["knife", "he", "flash", "smoke", "bomb"]:
 		pos = Vector3(0.22, -0.24, -0.46)
+	var hip_z := pos.z
 	var rot := Vector3.ZERO
-	pos += Vector3(cos(bob) * 0.012, -absf(sin(bob)) * 0.012, 0) * moving
-	pos += Vector3(-sway.x * 0.3, sway.y * 0.3, 0)
+	var loose := 1.0 - ads * 0.8  # aiming holds the gun steadier
+	pos += Vector3(cos(bob) * 0.012, -absf(sin(bob)) * 0.012, 0) * moving * loose
+	pos += Vector3(-sway.x * 0.3, sway.y * 0.3, 0) * loose
 	# Recoil: kick back and up right after a shot.
 	var kick := clampf(1.0 - h.since_shot / 0.12, 0.0, 1.0) if d.has("mag") else 0.0
 	pos.z += kick * (0.06 if kind in ["shotgun", "sniper", "magnum"] else 0.03)
@@ -180,6 +187,13 @@ func _first_person(h, delta: float) -> void:
 	if h.busy():
 		pos.y -= 0.12
 		rot.x -= 0.4
+	if ads > 0.0:
+		# Bring the sights up to the eye: the rear sight straight ahead of it.
+		var eased := ads * ads * (3.0 - 2.0 * ads)
+		var aim_pos := Vector3(-sight.x, -sight.y, -Models.ads_distance(h.current) - sight.z)
+		aim_pos.z += pos.z - hip_z  # keep the kick
+		pos = pos.lerp(aim_pos, eased)
+		rot = rot.lerp(Vector3(rot.x * 0.4, 0, rot.z * 0.3), eased)
 	hands.position = pos
 	hands.rotation = rot
 	var firing: bool = d.has("mag") and h.since_shot < 0.045
@@ -196,6 +210,7 @@ func _build_model(h) -> void:
 		flash = null
 	model_id = h.current
 	model_team = h.team
+	sight = Vector3.INF
 	h.view_muzzle = null
 	if model_id == "":
 		return
@@ -203,6 +218,8 @@ func _build_model(h) -> void:
 	hands.add_child(model)
 	var muzzle := model.get_node_or_null("Gun/Muzzle") as Node3D
 	h.view_muzzle = muzzle
+	var mark := model.get_node_or_null("Gun/Sight") as Node3D
+	sight = mark.position if mark != null else Vector3.INF
 	if muzzle != null and Weapons.is_gun(model_id):
 		flash = MeshInstance3D.new()
 		var star := QuadMesh.new()

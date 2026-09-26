@@ -63,6 +63,12 @@ func _ready() -> void:
 	# Moving.
 	sounds["step1"] = _step(0.9)
 	sounds["step2"] = _step(1.15)
+	sounds["shell"] = _make(0.25, func(t: float) -> float:
+		var s := 0.0
+		for start: float in [0.0, 0.07, 0.13]:
+			if t >= start:
+				s += sin(TAU * 5200.0 * (t - start)) * exp(-(t - start) * 60.0) * (1.0 - start * 4.0)
+		return s * 0.25)
 	sounds["land"] = _make(0.2, func(t: float) -> float:
 		return (_noise() * 0.6 + sin(TAU * 60.0 * t)) * exp(-t * 25.0) * 0.6, 0.25)
 

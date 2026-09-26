@@ -50,8 +50,10 @@ func _draw() -> void:
 	var view = rules.view
 	var font: Font = game.bold
 	if h.alive:
-		if h.scope > 0:
+		if h.scope > 0 and Weapons.data(h.current).has("scope"):
 			_draw_scope(s)
+		elif h.scope > 0:
+			draw_circle(size / 2.0, maxf(1.5 * s, 1.0), Color(GREEN, 0.7))  # aiming down the sights
 		else:
 			_draw_crosshair(h, s)
 		_draw_hurt(h, s)

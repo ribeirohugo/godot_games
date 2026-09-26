@@ -7,17 +7,25 @@ extends RefCounted
 ## hold the site. Defenders split over both sites and watch the entrances; once the bomb is down
 ## everyone goes to it, defenders to defuse, attackers to guard it. Aim starts off by an error that
 ## settles over time, and firing waits for a reaction delay; both depend on the skill level.
+##
+## To play like a person rather than a turret: an enemy has to stay in view a moment before it is
+## noticed (longer when far, off to the side, crouched or still), guns are only fired within their
+## useful range unless under fire, rifles stop to shoot and strafe between bursts, badly hurt bots
+## back off, and bots on the move keep apart, check the way ahead and glance around.
 
 const Weapons := preload("res://scripts/weapons.gd")
 
+##   spot: seconds to notice a still enemy 25 m away, straight ahead
 const SKILL := [
-	{"react": 0.6, "error": 0.12, "settle": 2.5, "turn": 4.0, "comp": 0.25, "head": 0.1, "fov": 0.5},
-	{"react": 0.4, "error": 0.08, "settle": 3.5, "turn": 6.0, "comp": 0.5, "head": 0.2, "fov": 0.42},
-	{"react": 0.26, "error": 0.055, "settle": 5.0, "turn": 9.0, "comp": 0.75, "head": 0.35, "fov": 0.34},
-	{"react": 0.17, "error": 0.035, "settle": 7.0, "turn": 13.0, "comp": 0.9, "head": 0.55, "fov": 0.25},
+	{"react": 0.6, "error": 0.12, "settle": 2.5, "turn": 4.0, "comp": 0.25, "head": 0.1, "fov": 0.5, "spot": 1.1},
+	{"react": 0.4, "error": 0.08, "settle": 3.5, "turn": 6.0, "comp": 0.5, "head": 0.2, "fov": 0.42, "spot": 0.8},
+	{"react": 0.26, "error": 0.055, "settle": 5.0, "turn": 9.0, "comp": 0.75, "head": 0.35, "fov": 0.34, "spot": 0.55},
+	{"react": 0.17, "error": 0.035, "settle": 7.0, "turn": 13.0, "comp": 0.9, "head": 0.55, "fov": 0.25, "spot": 0.38},
 ]
 const SCAN := 0.12  # seconds between looks around for enemies
 const LONG_GUNS := ["rifle", "ak", "m4", "scout", "sniper"]
+## How far each kind of gun is worth firing when nobody is shooting back.
+const RANGE := {"knife": 2.0, "pistol": 28.0, "magnum": 40.0, "smg": 32.0, "shotgun": 15.0}
 
 var me  # soldier.gd
 var rules
@@ -61,6 +69,12 @@ var crouch_hold := false
 var want_yaw := 0.0
 var want_pitch := 0.0
 var fighting := false
+var noticed := {}  # enemy -> seconds it has been in view without being noticed yet
+var sneak := false  # walks the last stretch to the site, to stay quiet
+var retreat_t := 0.0
+var glance_t := 0.0
+var glance := 0.0  # a look off to the side while moving or holding
+var wobble := 0.0  # clock for the hand's unsteadiness
 
 
 func setup(soldier, rules_ref, world_ref, skill_level: int) -> void:
@@ -83,6 +97,10 @@ func new_round() -> void:
 	start_t = randf_range(0.0, 2.5)
 	nade_t = randf_range(3.0, 8.0)
 	crouch_hold = randf() < 0.4
+	sneak = level >= 1 and randf() < 0.5
+	noticed.clear()
+	retreat_t = 0.0
+	glance = 0.0
 	want_yaw = me.yaw
 	want_pitch = 0.0
 	if me.team == "att":
@@ -133,6 +151,10 @@ func rotate_to(site: String) -> void:
 func on_hurt(attacker) -> void:
 	if target == null and attacker != null and attacker.alive and attacker.team != me.team:
 		_engage(attacker, 0.25)
+	elif target != null:
+		aim_err += Vector2(randf_range(-1.0, 1.0), randf_range(-0.3, 1.0)) * 0.035  # a hit throws the aim off
+	if me.health < 35.0 and retreat_t <= 0.0 and task != "retake" and task != "plant":
+		retreat_t = randf_range(1.5, 3.0)
 	last_seen = attacker.position if attacker != null else last_seen
 	last_seen_t = 0.0
 
@@ -158,6 +180,8 @@ func think(delta: float) -> void:
 	fighting = false
 	last_seen_t += delta
 	heard_t -= delta
+	retreat_t -= delta
+	wobble += delta
 	if me.frozen:
 		want_yaw = me.yaw
 		return
@@ -185,19 +209,28 @@ func _perceive(delta: float) -> void:
 	var best_d := INF
 	for e in rules.enemies_of(me):
 		if not e.alive:
+			noticed.erase(e)
 			continue
-		var head: Vector3 = e.eye_position()
-		var d := eye.distance_to(head)
-		if d > 80.0:
+		var seen := _in_view(e, eye, facing)
+		if seen < 0.0:
+			noticed[e] = maxf(noticed.get(e, 0.0) - SCAN * 0.5, 0.0)
 			continue
-		var dir := (head - eye) / maxf(d, 0.01)
-		if facing.dot(dir) < skill["fov"] and d > 3.0 and e != target:
-			continue
-		var chest: Vector3 = e.position + Vector3(0, e.eye_height() * 0.7, 0)
-		if not world.clear_line(eye, head) and not world.clear_line(eye, chest):
-			continue
-		if world.smoke_between(eye, head):
-			continue
+		var d := eye.distance_to(e.eye_position())
+		if e != target:
+			# Noticing someone takes a moment: longer far away, at the edge of the view, when they
+			# keep still or low; quicker when they move, shoot, or were just heard there.
+			var need: float = skill["spot"] * (0.15 + d / 25.0) * lerpf(2.2, 1.0, seen)
+			if e.since_shot < 0.6:
+				need *= 0.3
+			elif e.is_moving():
+				need *= 0.6
+			elif e.crouch > 0.5:
+				need *= 1.4
+			if heard_t > 0.0 and heard.distance_to(e.position) < 8.0:
+				need *= 0.5
+			noticed[e] = noticed.get(e, 0.0) + SCAN
+			if noticed[e] < need:
+				continue
 		if d < best_d:
 			best = e
 			best_d = d
@@ -211,6 +244,25 @@ func _perceive(delta: float) -> void:
 		unseen_t += SCAN
 		if unseen_t > 0.6 or not target.alive:
 			target = null
+
+
+## How squarely enemy `e` is in view (0 at the edge of the field of view, 1 dead ahead), or -1 when
+## it can't be seen at all.
+func _in_view(e, eye: Vector3, facing: Vector3) -> float:
+	var head: Vector3 = e.eye_position()
+	var d := eye.distance_to(head)
+	if d > 80.0:
+		return -1.0
+	var dir := (head - eye) / maxf(d, 0.01)
+	var dot := facing.dot(dir)
+	if dot < skill["fov"] and d > 3.0 and e != target:
+		return -1.0
+	var chest: Vector3 = e.position + Vector3(0, e.eye_height() * 0.7, 0)
+	if not world.clear_line(eye, head) and not world.clear_line(eye, chest):
+		return -1.0
+	if world.smoke_between(eye, head):
+		return -1.0
+	return clampf((dot - skill["fov"]) / (1.0 - skill["fov"]), 0.0, 1.0)
 
 
 func _engage(enemy, extra: float) -> void:
@@ -246,6 +298,9 @@ func _fight(delta: float) -> void:
 	point += e.velocity * 0.06
 	aim_err *= exp(-delta * skill["settle"])
 	var to := point - eye
+	# Hands are never perfectly still: a small drift that grows with distance.
+	var drift: Vector2 = Vector2(sin(wobble * 2.3 + me.position.x), sin(wobble * 1.7 + 1.3)) * skill["error"] * 0.12 * (1.0 + to.length() / 25.0)
+	to = Basis(Vector3.UP, drift.x) * to + Vector3(0, drift.y * to.length(), 0)
 	var flat := Vector2(to.x, to.z).length()
 	want_yaw = atan2(-to.x, -to.z) + aim_err.x - me.punch.x * 2.0 * skill["comp"]
 	want_pitch = atan2(to.y, flat) + aim_err.y - me.punch.y * 2.0 * skill["comp"]
@@ -256,6 +311,15 @@ func _fight(delta: float) -> void:
 	var data := Weapons.data(me.current)
 	var kind: String = data["kind"]
 	var can_shoot: bool = react_t <= 0.0 and unseen_t == 0.0 and off < tolerance * 1.6
+	# Too far for this gun: hold fire (unless being shot at) and close in or wait for them.
+	var too_far: bool = d > RANGE.get(kind, 999.0) and me.hurt_t <= 0.0
+	if too_far:
+		can_shoot = false
+	# Rifles stop before they shoot (moving spoils their aim), and strafe between bursts.
+	var long_gun := kind in LONG_GUNS
+	var still: bool = Vector2(me.velocity.x, me.velocity.z).length() < me.max_speed() * 0.4
+	if long_gun and level >= 1 and not still:
+		can_shoot = false
 	# Keep defusing when there isn't time to fight first.
 	if task == "retake" and me.defuse_t > 0.0 and rules.bomb_t < me.defuse_length() - me.defuse_t + 1.0:
 		me.want_use = true
@@ -285,19 +349,33 @@ func _fight(delta: float) -> void:
 				if can_shoot and tap_t <= 0.0 and me.cooldown <= 0.0:
 					me.want_fire = true
 					tap_t = data["rate"] + (0.25 - level * 0.05)
-	# Moving while fighting: long guns stand still to stay accurate, others strafe at a walk.
+	# Moving while fighting.
 	if unseen_t > 0.0:
 		if task != "hold" or me.position.distance_to(spot) < 10.0:
 			_go(last_seen, delta)
 		return
-	if kind in LONG_GUNS:
-		if level >= 2 and d > 18.0 and data.get("auto", false) and me.want_fire:
-			me.want_crouch = true
+	if retreat_t > 0.0 and d > 5.0:
+		# Badly hurt: back away while still facing the enemy, to get out of sight and reload.
+		me.move_input = Vector2(strafe_dir * 0.4, 1.0)
+		return
+	if too_far:
+		if task in ["hold", "guard"] and me.position.distance_to(spot) < 6.0:
+			me.want_crouch = crouch_hold  # let them come
+		else:
+			_go(e.position, delta)
+			me.want_walk = level >= 1
+		return
+	strafe_t -= delta
+	if strafe_t <= 0.0:
+		strafe_t = randf_range(0.35, 0.8)
+		strafe_dir = -strafe_dir
+	if long_gun:
+		if me.want_fire or react_t > 0.0 or level == 0:
+			if level >= 2 and d > 18.0 and data.get("auto", false):
+				me.want_crouch = true
+		else:
+			me.move_input = Vector2(strafe_dir, 0)  # between bursts
 	else:
-		strafe_t -= delta
-		if strafe_t <= 0.0:
-			strafe_t = randf_range(0.35, 0.8)
-			strafe_dir = -strafe_dir
 		me.move_input = Vector2(strafe_dir, 0)
 		me.want_walk = level >= 1
 
@@ -345,6 +423,8 @@ func _objective(delta: float) -> void:
 				task = "plant" if me.has_bomb else "site"
 			elif _go(world.center(route[route_i]), delta):
 				route_i += 1
+			# The last stretch to the site at a walk, to stay quiet, while there's time for it.
+			me.want_walk = sneak and route_i >= route.size() - 1 and rules.time_left() > 35.0
 			_look_ahead()
 		"site", "guard", "hold":
 			if task == "site" and me.has_bomb:
@@ -391,8 +471,8 @@ func _objective(delta: float) -> void:
 		_look_at(heard + Vector3(0, 1.3, 0))
 
 
-## Standing at a spot: watch the way enemies will come.
-func _hold(_delta: float) -> void:
+## Standing at a spot: watch the way enemies will come, now and then checking to the sides.
+func _hold(delta: float) -> void:
 	if watch == Vector3.INF:
 		var from_side := "att" if me.team == "def" else "def"
 		var far: Vector3 = rules.centroid(world.spawns[from_side])
@@ -400,6 +480,8 @@ func _hold(_delta: float) -> void:
 		watch = way[mini(6, way.size() - 1)] if way.size() > 0 else far
 		watch.y = 1.4
 	_look_at(watch)
+	_glance(delta, 0.45, 1.5, 3.5)
+	want_yaw += glance
 	me.want_crouch = crouch_hold
 
 
@@ -448,11 +530,26 @@ func _go(to: Vector3, delta: float) -> bool:
 		p = path[path_i]
 		flat = Vector3(p.x - me.position.x, 0, p.z - me.position.z)
 	var dir := flat.normalized()
+	if not fighting:
+		# Look where the path goes a little further on, and glance to the sides now and then.
+		var ahead: Vector3 = path[mini(path_i + 1, path.size() - 1)] if flat.length() < 3.0 else p
+		var look := Vector3(ahead.x - me.position.x, 0, ahead.z - me.position.z)
+		if look.length() < 0.3:
+			look = flat
+		_glance(delta, 0.7, 2.0, 5.0)
+		want_yaw = atan2(-look.x, -look.z) + glance
+		want_pitch = 0.0
+	# Keep a little apart from teammates instead of walking in a single file.
+	for mate in rules.side_team(me.team):
+		if mate == me or not mate.alive:
+			continue
+		var away := Vector3(me.position.x - mate.position.x, 0, me.position.z - mate.position.z)
+		var gap := away.length()
+		if gap < 1.6 and gap > 0.01:
+			dir += away / gap * (1.6 - gap) * 0.6
+	dir = dir.normalized()
 	var local := Basis(Vector3.UP, me.yaw).inverse() * dir
 	me.move_input = Vector2(local.x, local.z)
-	if not fighting:
-		want_yaw = atan2(-dir.x, -dir.z)
-		want_pitch = 0.0
 	# Unstick: if it hasn't moved for a second, sidestep and jump, then find a new path.
 	stuck_t += delta
 	if dodge_t > 0.0:
@@ -467,6 +564,18 @@ func _go(to: Vector3, delta: float) -> bool:
 		stuck_t = 0.0
 		stuck_from = me.position
 	return false
+
+
+## Now and then turns the look off to one side by up to `size` radians for a moment.
+func _glance(delta: float, size: float, least: float, most: float) -> void:
+	glance_t -= delta
+	if glance_t <= 0.0:
+		if glance == 0.0 and randf() < 0.6:
+			glance = randf_range(0.4, 1.0) * size * (1.0 if randf() < 0.5 else -1.0)
+			glance_t = randf_range(0.5, 1.0)
+		else:
+			glance = 0.0
+			glance_t = randf_range(least, most)
 
 
 func _look_ahead() -> void:

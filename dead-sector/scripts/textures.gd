@@ -5,16 +5,41 @@ extends RefCounted
 
 const SIZE := 128
 
+## How strongly each surface's relief shows, and whether its light parts are the low ones (mortar).
+const RELIEF := {"sandstone": [-3.0], "tiles": [2.5], "slabs": [2.0], "plaster": [2.0], "wood": [3.0],
+		"concrete": [2.0], "asphalt": [1.5], "metal": [3.0], "sand": [1.5], "plain": [1.0]}
+
 static var _textures := {}
+static var _normals := {}
 static var _materials := {}
 
 
 static func texture(kind: String) -> Texture2D:
 	if not _textures.has(kind):
 		var img := _paint(kind)
+		_normals[kind] = _normal_map(img, RELIEF.get(kind, [1.0])[0])
 		img.generate_mipmaps()
 		_textures[kind] = ImageTexture.create_from_image(img)
 	return _textures[kind]
+
+
+## Bumps from the painted image's brightness (dark mortar and cracks sink in), as a normal map.
+static func normal_texture(kind: String) -> Texture2D:
+	texture(kind)
+	return _normals[kind]
+
+
+static func _normal_map(img: Image, strength: float) -> ImageTexture:
+	var bump := Image.create(SIZE, SIZE, false, Image.FORMAT_RGBA8)
+	for y in SIZE:
+		for x in SIZE:
+			var v := img.get_pixel(x, y).get_luminance()
+			if strength < 0.0:
+				v = 1.0 - v
+			bump.set_pixel(x, y, Color(v, v, v))
+	bump.bump_map_to_normal_map(absf(strength))
+	bump.generate_mipmaps()
+	return ImageTexture.create_from_image(bump)
 
 
 ## A level surface: `kind` repeats every `meters`, mapped in world space (or per object when local).
@@ -24,7 +49,11 @@ static func surface(kind: String, meters := 2.0, tint := Color.WHITE, local := f
 		var mat := StandardMaterial3D.new()
 		mat.albedo_texture = texture(kind)
 		mat.albedo_color = tint
-		mat.roughness = 0.95
+		mat.roughness = 0.9 if kind != "metal" else 0.6
+		mat.metallic = 0.3 if kind == "metal" else 0.0
+		mat.normal_enabled = true
+		mat.normal_texture = normal_texture(kind)
+		mat.normal_scale = 1.0
 		mat.uv1_triplanar = true
 		mat.uv1_world_triplanar = not local
 		mat.uv1_scale = Vector3.ONE / meters
@@ -43,8 +72,16 @@ static func flat(color: Color, glow := 0.0, metal := 0.0, viewmodel := false) ->
 	if not _materials.has(key):
 		var mat := StandardMaterial3D.new()
 		mat.albedo_color = color
-		mat.roughness = 0.55 if metal > 0.0 else 0.85
+		mat.roughness = 0.45 if metal > 0.0 else 0.85
 		mat.metallic = metal
+		if glow <= 0.0 and color.a >= 1.0:
+			# Fine grain, so painted parts don't look like plastic.
+			mat.albedo_texture = texture("plain")
+			mat.uv1_triplanar = true
+			mat.uv1_scale = Vector3.ONE * 3.0
+			mat.normal_enabled = true
+			mat.normal_texture = normal_texture("plain")
+			mat.normal_scale = 0.35
 		if viewmodel:
 			mat.use_z_clip_scale = true
 			mat.z_clip_scale = 0.25
@@ -57,6 +94,17 @@ static func flat(color: Color, glow := 0.0, metal := 0.0, viewmodel := false) ->
 		if color.a < 1.0:
 			mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
 			mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+		_materials[key] = mat
+	return _materials[key]
+
+
+## Like flat(), but the color comes from the mesh's vertices: for models merged into one mesh.
+static func painted(metal := 0.0) -> StandardMaterial3D:
+	var key := "painted/%s" % metal
+	if not _materials.has(key):
+		var mat := flat(Color.WHITE, 0.0, metal).duplicate() as StandardMaterial3D
+		mat.vertex_color_use_as_albedo = true
+		mat.vertex_color_is_srgb = true
 		_materials[key] = mat
 	return _materials[key]
 

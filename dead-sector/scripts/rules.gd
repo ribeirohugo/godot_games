@@ -126,9 +126,11 @@ func squad_of_side(team: String) -> int:
 
 func scope_fov(s) -> float:
 	var d := Weapons.data(s.current)
-	if s.scope <= 0 or not d.has("scope"):
+	if s.scope <= 0:
 		return 74.0
-	return d["scope"][s.scope - 1]
+	if d.has("scope"):
+		return d["scope"][s.scope - 1]
+	return d.get("ads", 74.0)
 
 
 func time_left() -> float:

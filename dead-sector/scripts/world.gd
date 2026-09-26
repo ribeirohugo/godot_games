@@ -7,6 +7,7 @@ const Tex := preload("res://scripts/textures.gd")
 const Models := preload("res://scripts/models.gd")
 const Weapons := preload("res://scripts/weapons.gd")
 const Maps := preload("res://scripts/maps.gd")
+const DressingScript := preload("res://scripts/dressing.gd")
 
 const CELL := Maps.CELL
 const SOLID := "#cC-o"
@@ -38,6 +39,9 @@ var smokes: Array = []  # {pos, radius, t, node, puffs}
 var particles: Array = []  # [MeshInstance3D, velocity, life left, life]
 var flashes: Array = []  # [Node3D, life left, life, grow]
 var marks: Array[Node3D] = []  # bullet holes, oldest first
+var shells: Array = []  # [MeshInstance3D, velocity, life left, bounced]
+var puffs: Array = []  # [MeshInstance3D, life left, life, size, rise]
+var shell_mesh: CylinderMesh
 var hole_mesh: QuadMesh
 var hole_mat: StandardMaterial3D
 
@@ -56,6 +60,12 @@ func build(game_ref, rules_ref, map_data: Dictionary) -> void:
 	hole_mesh = QuadMesh.new()
 	hole_mesh.size = Vector2(0.09, 0.09)
 	hole_mat = Tex.flat(Color(0.06, 0.05, 0.04))
+	shell_mesh = CylinderMesh.new()
+	shell_mesh.top_radius = 0.005
+	shell_mesh.bottom_radius = 0.006
+	shell_mesh.height = 0.03
+	shell_mesh.radial_segments = 6
+	shell_mesh.rings = 1
 	_environment()
 	_build_level()
 	_build_nav()
@@ -280,7 +290,10 @@ func fire_bullet(shooter, from: Vector3, dir: Vector3, weapon: Dictionary, id: S
 		burst(end, Color(0.55, 0.03, 0.03), 5, 2.5, 0.05)
 	else:
 		mark(end, hit["normal"])
-		burst(end + hit["normal"] * 0.05, Color(0.45, 0.4, 0.33), 3, 2.0, 0.04)
+		var n: Vector3 = hit["normal"]
+		burst(end + n * 0.05, Color(0.45, 0.4, 0.33), 3, 2.0, 0.04)
+		burst(end + n * 0.03, Color(1.0, 0.8, 0.45), 2, 5.0, 0.015, 5.0)
+		puff(end + n * 0.1, Color(0.6, 0.55, 0.47, 0.5), 0.25, 0.5, 0.3)
 		if randf() < 0.25:
 			game.sfx.play_at("ricochet", end, -6.0)
 		else:
@@ -317,6 +330,37 @@ func mark(pos: Vector3, normal: Vector3) -> void:
 	marks.append(hole)
 	if marks.size() > 120:
 		marks.pop_front().queue_free()
+
+
+## A spent case flying out of the ejection port.
+func eject_shell(pos: Vector3, vel: Vector3) -> void:
+	var shell := MeshInstance3D.new()
+	shell.mesh = shell_mesh
+	shell.material_override = Tex.flat(Color(0.85, 0.65, 0.3), 0.0, 0.8)
+	shell.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	shell.position = pos
+	shell.rotation = Vector3(randf() * TAU, randf() * TAU, 0)
+	add_child(shell)
+	shells.append([shell, vel, 2.5, false])
+	if shells.size() > 50:
+		shells.pop_front()[0].queue_free()
+
+
+## A soft cloud that grows, rises and fades: gun smoke, dust.
+func puff(pos: Vector3, color: Color, size: float, life: float, rise: float) -> void:
+	var cloud := MeshInstance3D.new()
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.5
+	sphere.height = 1.0
+	sphere.radial_segments = 8
+	sphere.rings = 4
+	cloud.mesh = sphere
+	cloud.material_override = Tex.fading(color)
+	cloud.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	cloud.position = pos
+	cloud.scale = Vector3.ONE * size * 0.3
+	add_child(cloud)
+	puffs.append([cloud, life, life, size, rise])
 
 
 func muzzle_flash(pos: Vector3, size := 1.0) -> void:
@@ -567,6 +611,44 @@ func _process(delta: float) -> void:
 			v = Vector3.ZERO
 		p[1] = v
 		bit.scale = Vector3.ONE * (p[2] / p[3])
+	for i in range(shells.size() - 1, -1, -1):
+		var sh: Array = shells[i]
+		var node: MeshInstance3D = sh[0]
+		sh[2] -= delta
+		if sh[2] <= 0.0:
+			node.queue_free()
+			shells.remove_at(i)
+			continue
+		var v: Vector3 = sh[1]
+		if v == Vector3.ZERO:
+			continue
+		v.y -= GRAVITY * 0.7 * delta
+		node.position += v * delta
+		node.rotation.x += delta * 25.0
+		var floor_y := ground_at(node.position) + 0.006
+		if node.position.y < floor_y:
+			node.position.y = floor_y
+			if not sh[3]:
+				sh[3] = true
+				game.sfx.play_at("shell", node.position, -14.0)
+				v = Vector3(v.x * 0.35, -v.y * 0.3, v.z * 0.35)
+			else:
+				v = Vector3.ZERO
+				node.rotation.x = PI / 2.0
+		sh[1] = v
+	for i in range(puffs.size() - 1, -1, -1):
+		var pf: Array = puffs[i]
+		var cloud: MeshInstance3D = pf[0]
+		pf[1] -= delta
+		if pf[1] <= 0.0:
+			cloud.queue_free()
+			puffs.remove_at(i)
+			continue
+		var k: float = 1.0 - pf[1] / pf[2]
+		cloud.scale = Vector3.ONE * pf[3] * (0.3 + 0.7 * sqrt(k))
+		cloud.position.y += pf[4] * delta
+		var mat := cloud.material_override as StandardMaterial3D
+		mat.albedo_color.a = (1.0 - k) * 0.5
 	for i in range(flashes.size() - 1, -1, -1):
 		var f: Array = flashes[i]
 		var node: Node3D = f[0]
@@ -592,15 +674,34 @@ func _environment() -> void:
 	sky_mat.sky_horizon_color = data["horizon"]
 	sky_mat.ground_bottom_color = data["ground"]
 	sky_mat.ground_horizon_color = data["horizon"]
+	sky_mat.sun_angle_max = 8.0
+	sky_mat.sun_curve = 0.08
+	sky_mat.sky_curve = 0.12
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 	var env := Environment.new()
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.75
-	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
-	env.tonemap_exposure = 1.05
+	env.ambient_light_energy = 0.7
+	env.tonemap_mode = Environment.TONE_MAPPER_ACES
+	env.tonemap_exposure = 1.0
+	env.tonemap_white = 6.0
+	# Contact shadows in corners and under crates, and a soft bloom on bright things.
+	env.ssao_enabled = true
+	env.ssao_radius = 1.4
+	env.ssao_intensity = 2.2
+	env.ssao_detail = 0.6
+	env.ssil_enabled = true
+	env.ssil_radius = 4.0
+	env.ssil_intensity = 0.8
+	env.glow_enabled = true
+	env.glow_intensity = 0.35
+	env.glow_bloom = 0.04
+	env.glow_hdr_threshold = 1.2
+	env.adjustment_enabled = true
+	env.adjustment_contrast = 1.08
+	env.adjustment_saturation = 1.08
 	env.fog_enabled = true
 	env.fog_light_color = data["horizon"]
 	env.fog_density = 0.0035
@@ -613,8 +714,11 @@ func _environment() -> void:
 	sun.light_color = data["sun_color"]
 	sun.light_energy = 1.35
 	sun.shadow_enabled = true
-	sun.shadow_blur = 0.5
-	sun.directional_shadow_max_distance = 70.0
+	sun.shadow_blur = 0.8
+	sun.shadow_bias = 0.03
+	sun.shadow_normal_bias = 1.2
+	sun.directional_shadow_max_distance = 80.0
+	sun.directional_shadow_blend_splits = true
 	add_child(sun)
 
 
@@ -711,6 +815,7 @@ func _build_level() -> void:
 		_collider(body, crate[0], crate[1], crate[2])
 	_build_floor(body)
 	_site_marks()
+	DressingScript.new().build(self, body)
 
 
 ## True when a wall cell touches an open cell (other walls are never seen).

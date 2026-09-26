@@ -93,6 +93,16 @@ var hurt_t := 0.0
 var hurt_from := Vector3.ZERO
 var walk_phase := 0.0
 var death_t := 0.0
+var grounded := true
+var stride := 0.0  # how far the legs swing, eased
+var leg_yaw := 0.0  # the hips turn towards where the legs carry the body
+var lean := Vector2.ZERO  # x sideways into a strafe, y forwards (running, crouching)
+var carry := 0.0  # 1 while running with the gun held low
+var land_t := 0.0
+var breath := 0.0
+var hit_dir := Vector3.ZERO  # the way the last bullet travelled
+var fall_dir := Vector3.BACK  # the way a dead soldier falls
+var fall_roll := 0.0
 var first_person := false
 var view_muzzle: Node3D  # the first-person gun's muzzle, while the camera is behind this soldier's eyes
 
@@ -146,7 +156,7 @@ func set_team(side: String) -> void:
 	collision_mask = world.LAYER_WORLD | (world.LAYER_DEF if team == "att" else world.LAYER_ATT)
 	if parts.has("root"):
 		parts["root"].queue_free()
-	parts = Models.soldier(team)
+	parts = Models.soldier(team, hash(nick))
 	add_child(parts["root"])
 	held = null
 	_arm()
@@ -188,13 +198,12 @@ func respawn(pos: Vector3, facing: float, keep: bool) -> void:
 	flash_t = 0.0
 	hurt_t = 0.0
 	death_t = 0.0
+	hit_dir = Vector3.ZERO
+	_reset_pose()
 	collision_layer = world.LAYER_ATT if team == "att" else world.LAYER_DEF
 	collision_mask = world.LAYER_WORLD | (world.LAYER_DEF if team == "att" else world.LAYER_ATT)
 	for area in hitboxes:
 		area.collision_layer = world.LAYER_HIT
-	var root: Node3D = parts["root"]
-	root.rotation = Vector3(0, yaw, 0)
-	root.position = Vector3.ZERO
 	current = ""
 	previous = "knife"
 	equip(best_weapon())
@@ -341,11 +350,13 @@ func start_reload() -> void:
 	_sound("mag_out", -4.0)
 
 
+## Right click: through the scope of a sniper rifle (repeat for more zoom), or down the sights of
+## any other gun, which steadies the aim but slows you down.
 func toggle_scope() -> void:
 	var d := Weapons.data(current)
-	if not d.has("scope") or reload_t > 0.0 or deploy_t > 0.0:
+	if not (d.has("scope") or d.has("ads")) or reload_t > 0.0 or deploy_t > 0.0:
 		return
-	var levels: Array = d["scope"]
+	var levels: Array = d["scope"] if d.has("scope") else [d["ads"]]
 	scope = (scope + 1) % (levels.size() + 1)
 	rescope = 0
 	if is_human:
@@ -383,7 +394,7 @@ func max_speed() -> float:
 	var d := Weapons.data(current)
 	var speed: float = d["speed"]
 	if scope > 0:
-		speed *= 0.5
+		speed *= 0.5 if d.has("scope") else 0.78
 	if crouch > 0.5:
 		speed *= CROUCHED
 	elif want_walk:
@@ -402,6 +413,8 @@ func inaccuracy() -> float:
 	var speed := Vector2(velocity.x, velocity.z).length()
 	var run := clampf((speed / d["speed"] - 0.36) / 0.64, 0.0, 1.0)  # walking keeps a gun steady
 	var value: float = base * (0.75 if crouch > 0.8 else 1.0) + d["move"] * run
+	if scope > 0 and not d.has("scope"):
+		value *= 0.6
 	if not is_on_floor():
 		value += 0.12
 	if d.get("auto", false):
@@ -496,6 +509,7 @@ func _physics_process(delta: float) -> void:
 		_read_input(delta)
 	_defusing(delta)
 	_move(delta)
+	grounded = is_on_floor()
 	_weapon(delta)
 	_update_hitboxes()
 
@@ -536,8 +550,10 @@ func _move(delta: float) -> void:
 	velocity.z = v.z
 	var falling := velocity.y
 	move_and_slide()
-	if is_on_floor() and not on_floor and falling < -6.0:
-		_sound("land", -6.0)
+	if is_on_floor() and not on_floor and falling < -3.0:
+		land_t = clampf(-falling / 9.0, 0.3, 1.0)
+		if falling < -6.0:
+			_sound("land", -6.0)
 	if is_on_floor():
 		var speed := Vector2(velocity.x, velocity.z).length()
 		step_t -= delta * speed
@@ -680,6 +696,10 @@ func _shoot(d: Dictionary) -> void:
 	_sound(SOUND.get(current, "pistol"), -2.0 if first_person else 0.0)
 	if not first_person:
 		world.muzzle_flash(muzzle, 1.4 if pellets > 1 else 1.0)
+	var look := view_basis()
+	world.puff(muzzle + look * Vector3(0, 0.02, -0.05), Color(0.75, 0.75, 0.72, 0.35), 0.18 if pellets == 1 else 0.3, 0.45, 0.25)
+	var port := muzzle + look * Vector3(0.04, 0.0, 0.42 if d.get("auto", false) or pellets > 1 else 0.2)
+	world.eject_shell(port, look * Vector3(randf_range(2.0, 3.0), randf_range(1.2, 2.0), randf_range(-0.2, 0.3)) + velocity)
 	world.noise(position, 18.0 if current == "k45" else 55.0, self)
 	if d.has("scope") and scope > 0:
 		rescope = scope
@@ -818,11 +838,14 @@ func take_blast(amount: float, attacker, weapon: String) -> void:
 	_harm(damage, attacker, weapon, false, Vector3.ZERO)
 
 
-func _harm(damage: float, attacker, weapon: String, headshot: bool, _dir: Vector3) -> void:
+func _harm(damage: float, attacker, weapon: String, headshot: bool, dir: Vector3) -> void:
 	health -= damage
 	hurt_t = 1.0
+	hit_dir = dir
 	if attacker != null and attacker != self:
 		hurt_from = attacker.position
+		if dir == Vector3.ZERO:
+			hit_dir = position - attacker.position
 	if brain != null and attacker != null and attacker != self:
 		brain.on_hurt(attacker)
 	if is_human:
@@ -868,6 +891,11 @@ func _die(attacker, weapon: String, headshot: bool) -> void:
 	grenades.clear()
 	current = ""
 	_arm()
+	# Fall the way the shot pushed, or backwards.
+	var push := Vector3(hit_dir.x, 0, hit_dir.z)
+	fall_dir = push.normalized() if push.length() > 0.01 else Basis(Vector3.UP, yaw) * Vector3.BACK
+	fall_dir = fall_dir.rotated(Vector3.UP, randf_range(-0.35, 0.35))
+	fall_roll = randf_range(-0.5, 0.5)
 	game.sfx.play_at("death", position + Vector3(0, 1.3, 0), -2.0)
 	rules.on_death(self, attacker, weapon, headshot)
 
@@ -877,7 +905,7 @@ func _dead(delta: float) -> void:
 	velocity.z = move_toward(velocity.z, 0.0, delta * 20.0)
 	velocity.y -= GRAVITY * delta
 	move_and_slide()
-	death_t = minf(death_t + delta / 0.6, 1.0)
+	death_t = minf(death_t + delta / 0.85, 1.0)
 
 
 # --- Body ----------------------------------------------------------------------------------
@@ -886,13 +914,7 @@ func _dead(delta: float) -> void:
 func _arm() -> void:
 	if not parts.has("aim"):
 		return
-	var aim: Node3D = parts["aim"]
-	if current == "":
-		for child in aim.get_children():
-			child.queue_free()
-		held = null
-		return
-	held = Models.arm_soldier(aim, current, parts["arm_color"])
+	held = Models.arm_soldier(parts["aim"], current, parts["arm_color"])
 	set_first_person(first_person)
 
 
@@ -900,11 +922,11 @@ func _update_hitboxes() -> void:
 	var legs := lerpf(0.86, 0.46, crouch)
 	var stomach := lerpf(0.3, 0.26, crouch)
 	var chest := lerpf(0.4, 0.34, crouch)
-	var lean := Basis(Vector3.UP, yaw) * Vector3(0, 0, -0.12 * crouch)
+	var ahead := Basis(Vector3.UP, yaw) * Vector3(0, 0, -0.66 * sin(lean.y))  # the upper body leans forwards
 	_place_box("legs", Vector3(0.42, legs, 0.28), Vector3(0, legs / 2.0, 0))
-	_place_box("stomach", Vector3(0.46, stomach, 0.3), Vector3(0, legs + stomach / 2.0, 0) + lean * 0.5)
-	_place_box("chest", Vector3(0.5, chest, 0.32), Vector3(0, legs + stomach + chest / 2.0, 0) + lean)
-	(hit_shapes["head"] as CollisionShape3D).position = Vector3(0, eye_height() + 0.06, 0) + lean * 1.2
+	_place_box("stomach", Vector3(0.46, stomach, 0.3), Vector3(0, legs + stomach / 2.0, 0) + ahead * 0.5)
+	_place_box("chest", Vector3(0.5, chest, 0.32), Vector3(0, legs + stomach + chest / 2.0, 0) + ahead)
+	(hit_shapes["head"] as CollisionShape3D).position = Vector3(0, eye_height() + 0.06, 0) + ahead * 1.2
 
 
 func _place_box(group: String, size: Vector3, pos: Vector3) -> void:
@@ -913,31 +935,120 @@ func _place_box(group: String, size: Vector3, pos: Vector3) -> void:
 	hit_col.position = pos
 
 
+## Puts the body back upright, e.g. for a new round.
+func _reset_pose() -> void:
+	if not parts.has("root"):
+		return
+	(parts["root"] as Node3D).transform = Transform3D(Basis(Vector3.UP, yaw), Vector3.ZERO)
+	stride = 0.0
+	leg_yaw = 0.0
+	lean = Vector2.ZERO
+	carry = 0.0
+	land_t = 0.0
+
+
 func _animate(delta: float) -> void:
 	if not parts.has("root"):
 		return
 	var root: Node3D = parts["root"]
-	if not alive:
-		var ease_t := 1.0 - pow(1.0 - death_t, 3.0)
-		root.rotation.x = ease_t * 1.45
-		(parts["aim"] as Node3D).rotation.x = lerpf((parts["aim"] as Node3D).rotation.x, -1.2, ease_t)
-		return
-	root.rotation = Vector3(0, yaw, 0)
-	var speed := Vector2(velocity.x, velocity.z).length()
-	if is_on_floor():
-		walk_phase += delta * speed * 2.1
-	var stride := sin(walk_phase) * 0.55 * clampf(speed / 5.0, 0.0, 1.0)
-	(parts["hips"] as Node3D).position.y = 0.9 - 0.5 * crouch
+	var hips: Node3D = parts["hips"]
+	var torso: Node3D = parts["torso"]
+	var head: Node3D = parts["head"]
+	var aim: Node3D = parts["aim"]
 	var thighs: Array = parts["thighs"]
 	var shins: Array = parts["shins"]
+	var feet: Array = parts["feet"]
+	if not alive:
+		_animate_death(root, hips, torso, head, aim, thighs, shins, feet)
+		return
+	root.transform = Transform3D(Basis(Vector3.UP, yaw), Vector3.ZERO)
+	breath += delta
+	var flat := Vector3(velocity.x, 0, velocity.z)
+	var speed := flat.length()
+	var run := clampf(speed / 5.4, 0.0, 1.0)
+	var blend := minf(delta * 8.0, 1.0)
+	# The legs point where the body goes (walking backwards is walking forwards in reverse), and the
+	# upper body turns back the other way, so it keeps facing the aim.
+	var local := Basis(Vector3.UP, yaw).inverse() * flat
+	var heading := 0.0
+	var back := false
+	if speed > 0.4:
+		heading = atan2(-local.x, -local.z)
+		if absf(heading) > PI * 0.55:
+			back = true
+			heading = wrapf(heading + PI, -PI, PI)
+	leg_yaw = lerp_angle(leg_yaw, clampf(heading * 0.85, -1.0, 1.0), blend * 0.7)
+	var moving := speed > 0.4 and grounded
+	stride = move_toward(stride, lerpf(0.28, 0.6, run) * (1.0 - 0.4 * crouch) if moving else 0.0, delta * 2.5)
+	if grounded:
+		var step := lerpf(0.8, 1.5, run) * (1.0 - 0.3 * crouch)  # meters per step
+		walk_phase += delta * speed * PI / step * (-1.0 if back else 1.0)
+	land_t = maxf(land_t - delta * 4.0, 0.0)
+	var land := sin(land_t * PI) * land_t
+	# Crouching: down on one knee when still, a squat when moving.
+	var kneel := crouch * (1.0 - clampf(speed / 1.2, 0.0, 1.0))
+	var squat := crouch - kneel
+	var kneel_thigh := [1.5, 1.0]
+	var kneel_shin := [-1.9, -2.45]
 	for i in 2:
-		var swing := stride if i == 0 else -stride
-		(thighs[i] as Node3D).rotation.x = crouch * 1.3 + swing
-		(shins[i] as Node3D).rotation.x = -crouch * 2.3 - maxf(-swing, 0.0) * 1.2
-	(parts["torso"] as Node3D).rotation.x = -0.18 * crouch
-	(parts["aim"] as Node3D).rotation.x = pitch + 0.18 * crouch
-	(parts["head"] as Node3D).rotation.x = pitch * 0.5 + 0.18 * crouch
-	if not is_on_floor():
-		for i in 2:
-			(thighs[i] as Node3D).rotation.x = 0.5
-			(shins[i] as Node3D).rotation.x = -0.9
+		var phase := walk_phase + PI * i
+		var swing := sin(phase) * stride
+		var lift := maxf(cos(phase) * (-1.0 if back else 1.0), 0.0) * stride * (1.1 + run)  # the knee folds as the leg swings through
+		var thigh_x: float = swing + squat * 1.3 + kneel * kneel_thigh[i] + land * 0.5
+		var shin_x: float = -lift - 0.1 * stride - squat * 2.3 + kneel * kneel_shin[i] - land * 0.9
+		if not grounded:
+			thigh_x = 0.55 if i == 0 else 0.25
+			shin_x = -1.0 if i == 0 else -0.6
+		(thighs[i] as Node3D).rotation = Vector3(thigh_x, 0, 0)
+		(shins[i] as Node3D).rotation = Vector3(shin_x, 0, 0)
+		# The foot stays level with the ground, rolling onto the toes as it pushes off.
+		var toe := (-maxf(-swing, 0.0) * 0.9 + maxf(swing, 0.0) * 0.25) if moving else 0.0
+		(feet[i] as Node3D).rotation = Vector3(-(thigh_x + shin_x) + toe * (1.0 - crouch), 0, 0)
+	var bob := absf(sin(walk_phase)) * 0.05 * stride
+	hips.position.y = 0.9 - 0.5 * crouch - bob - land * 0.1
+	hips.rotation = Vector3(0, leg_yaw, sin(walk_phase) * 0.05 * stride)
+	# The upper body leans into running and strafing, breathes when still and flinches when hit.
+	var side_lean := clampf(-local.x / 5.4, -1.0, 1.0) * 0.09
+	var forward_lean := run * (0.14 if not back else -0.05) + crouch * 0.18
+	lean = lean.lerp(Vector2(side_lean, forward_lean), blend * 0.6)
+	var breathe := sin(breath * 1.8) * 0.014 * (1.0 - run)
+	var flinch := clampf((hurt_t - 0.8) / 0.2, 0.0, 1.0)
+	var counter := -sin(walk_phase) * 0.12 * stride
+	torso.rotation = Vector3(-lean.y + breathe + flinch * 0.2, -leg_yaw + counter, lean.x + flinch * 0.08)
+	head.rotation = Vector3(pitch * 0.5 + lean.y * 0.9 - breathe, -counter, -lean.x * 0.5)
+	# The gun is raised to the aim, or held low while running; shots kick it, reloads tip it.
+	var fighting: bool = brain != null and brain.fighting
+	var low := run > 0.55 and since_shot > 1.0 and scope == 0 and not fighting and current != ""
+	carry = move_toward(carry, 1.0 if low else 0.0, delta * 4.0)
+	var kick := clampf(1.0 - since_shot / 0.1, 0.0, 1.0) if Weapons.data(current).has("mag") else 0.0
+	var tip := sin((1.0 - reload_t / reload_len) * PI) if reload_t > 0.0 and reload_len > 0.0 else 0.0
+	var lower := deploy_t / DEPLOY if deploy_t > 0.0 else 0.0
+	var reach := 1.0 if busy() else 0.0
+	aim.rotation = Vector3(pitch + lean.y - breathe - flinch * 0.2 + kick * 0.07 - carry * 0.5 - tip * 0.45 - lower * 0.7 - reach * 0.9,
+			carry * 0.4 + tip * 0.2, -tip * 0.5)
+	aim.position = Vector3(0, 0.5, kick * 0.05)
+
+
+## The knees give way, then the body topples the way the last shot pushed it and settles.
+func _animate_death(root: Node3D, hips: Node3D, torso: Node3D, head: Node3D, aim: Node3D, thighs: Array, shins: Array, feet: Array) -> void:
+	var buckle := smoothstep(0.0, 0.3, death_t)
+	var fall := clampf((death_t - 0.1) / 0.75, 0.0, 1.0)
+	fall *= fall  # gravity
+	var settle := clampf((death_t - 0.85) / 0.15, 0.0, 1.0)
+	var axis := Vector3.UP.cross(fall_dir).normalized()
+	var angle := fall * 1.5 - sin(settle * PI) * 0.08
+	root.transform = Transform3D(Basis(axis, angle) * Basis(Vector3.UP, yaw + fall_roll * fall),
+			Vector3(0, 0.14 * fall, 0) + fall_dir * 0.15 * fall)
+	var fold := buckle * (1.0 - fall * 0.7)
+	for i in 2:
+		var thigh_x := fold * (0.9 if i == 0 else 0.6) + fall * (0.35 if i == 0 else 0.0)
+		var shin_x := -fold * (1.5 if i == 0 else 1.1) - fall * (0.7 if i == 0 else 0.1)
+		(thighs[i] as Node3D).rotation = Vector3(thigh_x, 0, 0)
+		(shins[i] as Node3D).rotation = Vector3(shin_x, 0, 0)
+		(feet[i] as Node3D).rotation = Vector3(0.3 * fall, 0, 0)
+	hips.position.y = 0.9 - 0.3 * fold
+	hips.rotation = Vector3(0, leg_yaw * (1.0 - buckle), 0)
+	torso.rotation = Vector3(-0.35 * fold, -leg_yaw * (1.0 - buckle), fall_roll * 0.3 * fall)
+	head.rotation = Vector3(-0.4 * fold + 0.3 * fall, 0, 0.5 * fall * (1.0 if fall_roll >= 0.0 else -1.0))
+	aim.rotation = Vector3(lerpf(pitch, 0.6, buckle), 0, 0)
+	aim.position = Vector3(0, 0.5, 0)
